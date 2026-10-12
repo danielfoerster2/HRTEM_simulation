@@ -39,14 +39,15 @@ module nano_process
             
                 do j_atom = 1, n_atoms
                     if (visited(j_atom)) cycle
-                    delta = pos(:,j_atom) - pos(:,current_atom)
+                    delta = pos(:, j_atom) - pos(:, current_atom)
                     delta = delta - box * nint(delta / box)
                     if(dot_product(delta, delta) .gt. cutoff2) cycle
                     stack_top = stack_top + 1
                     stack(stack_top) = j_atom
                     visited(j_atom) = .true.
                     cluster_id(j_atom) = n_clusters
-                    pos_tmp(:, j_atom) = pos(:, j_atom)
+                    !pos_tmp(:, j_atom) = pos(:, j_atom)
+                    pos_tmp(:, j_atom) = pos_tmp(:, current_atom) + delta
                 enddo
             enddo
         enddo
@@ -75,21 +76,21 @@ module nano_process
         n_atoms = largest_size
         
         ! A verifier que ce calcul centre bien le cluster sur la boite de simulation
-        pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - box(1) * nint((pos(1, 1:n_atoms) - pos(1, 1) )/ box(1))
-        pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - box(2) * nint((pos(2, 1:n_atoms) - pos(2, 1) )/ box(2))
-        pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - box(3) * nint((pos(3, 1:n_atoms) - pos(3, 1) )/ box(3))
+        !pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - box(1) * nint((pos(1, 1:n_atoms) - pos(1, 1) )/ box(1))
+        !pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - box(2) * nint((pos(2, 1:n_atoms) - pos(2, 1) )/ box(2))
+        !pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - box(3) * nint((pos(3, 1:n_atoms) - pos(3, 1) )/ box(3))
         pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - sum(pos(1, 1:n_atoms)) / n_atoms
         pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - sum(pos(2, 1:n_atoms)) / n_atoms
         pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - sum(pos(3, 1:n_atoms)) / n_atoms
-        pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - box(1) * nint(pos(1, 1:n_atoms) / box(1))
-        pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - box(2) * nint(pos(2, 1:n_atoms) / box(2))
-        pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - box(3) * nint(pos(3, 1:n_atoms) / box(3))
-        pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - sum(pos(1, 1:n_atoms)) / n_atoms
-        pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - sum(pos(2, 1:n_atoms)) / n_atoms
-        pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - sum(pos(3, 1:n_atoms)) / n_atoms
-        pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - box(1) / 2.0d0
-        pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - box(2) / 2.0d0
-        pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - box(3) / 2.0d0
+        !pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - box(1) * nint(pos(1, 1:n_atoms) / box(1))
+        !pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - box(2) * nint(pos(2, 1:n_atoms) / box(2))
+        !pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - box(3) * nint(pos(3, 1:n_atoms) / box(3))
+        !pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - sum(pos(1, 1:n_atoms)) / n_atoms
+        !pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - sum(pos(2, 1:n_atoms)) / n_atoms
+        !pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - sum(pos(3, 1:n_atoms)) / n_atoms
+        !pos(1, 1:n_atoms) = pos(1, 1:n_atoms) - box(1) / 2.0d0
+        !pos(2, 1:n_atoms) = pos(2, 1:n_atoms) - box(2) / 2.0d0
+        !pos(3, 1:n_atoms) = pos(3, 1:n_atoms) - box(3) / 2.0d0
 
     endsubroutine
     
@@ -299,6 +300,8 @@ module nano_process
         if (maxval(pos_cluster(3, 1:n_atoms_tot)) .ge. 0.5d0 * box_hrtem(3) * 10.0d0 .or. minval(pos_cluster(3, 1:n_atoms_tot)) &
                     &.lt. -0.5d0 * box_hrtem(3) * 10.0d0) then
             placed = .false.
+            call save_xyz
+            call save_xyz2
             write(*,*) "Cluster with substrate does not fit in the box height. Skipping. (id_sim = ", id_sim_bis, ")"
         endif
 
@@ -320,13 +323,38 @@ module nano_process
         write(id_str, '(I0)') id_sim_bis
         filename = 'xyz_substrate/' // trim(id_str) // '.xyz'
 
-        write(header, '(A,F0.3,A,F0.3,A,F0.3,A)') 'Lattice="', lattice(1), ' 0.0 0.0 0.0 ', lattice(2), &
-            ' 0.0 0.0 0.0 ', lattice(3), '" Properties=species:S:1:pos:R:3 pbc="T T F"'
+        write(header, '(A,F0.3,A,F0.3,A,F0.3,A,F0.3,A)') 'Lattice="', lattice(1), ' 0.0 0.0 0.0 ', lattice(2), &
+            ' 0.0 0.0 0.0 ', lattice(3), '" Origin="0.0 0.0 ', -0.5d0*lattice(3), '" Properties=species:S:1:pos:R:3 pbc="T T F"'
         open(newunit=unit_xyz, file=trim(filename), status='replace', action='write')
         write(unit_xyz, '(I0)') n_atoms_tot
         write(unit_xyz, '(A)') trim(header)
         do i_atom = 1, n_atoms_tot
             write(unit_xyz, '(A,3(1X,F12.5))') trim(species(i_atom)), pos_cluster(:, i_atom)
+        enddo
+        close(unit_xyz)
+
+    endsubroutine
+
+
+    subroutine save_xyz2
+
+        use variable, only: pos, species, box
+        use descriptor, only: id_sim_bis, n_atoms
+
+        integer             ::  i_atom, unit_xyz
+        character(len=255)  ::  filename, header
+        character(len=255)  ::  id_str
+
+        write(id_str, '(I0)') id_sim_bis
+        filename = 'xyz_substrate/' // trim(id_str) // '_original.xyz'
+
+        write(header, '(A,F0.3,A,F0.3,A,F0.3,A)') 'Lattice="', box(1), ' 0.0 0.0 0.0 ', box(2), &
+            ' 0.0 0.0 0.0 ', box(3), '" Properties=species:S:1:pos:R:3 pbc="T T F"'
+        open(newunit=unit_xyz, file=trim(filename), status='replace', action='write')
+        write(unit_xyz, '(I0)') n_atoms
+        write(unit_xyz, '(A)') trim(header)
+        do i_atom = 1, n_atoms
+            write(unit_xyz, '(A,3(1X,F12.5))') trim(species(i_atom)), pos(:, i_atom)
         enddo
         close(unit_xyz)
 

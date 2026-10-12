@@ -51,7 +51,7 @@ program main
     if(rank.eq.0) call execute_command_line('find ' // trim(substrate_dir) // &
         ' -maxdepth 1 -name "*.xyz" | sort -V > ' // substrate_list)
 
-    !if (rank .eq. 0) call execute_command_line('mkdir -p xyz_substrate')
+    if (rank .eq. 0) call execute_command_line('mkdir -p xyz_substrate')
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
     call read_file_list
@@ -90,7 +90,6 @@ program main
             call read_substrate_file
             call add_substrate_to_cluster
             if (.not. placed) cycle
-            !call save_xyz
             call read_input
             call prepare_hrtem_particle
             
