@@ -9,7 +9,7 @@ module slc
     double precision    ::  volume_slc, f_re, f_im, gthr2, gx(nx_max), gy(ny_max), biso_type(n_types_max), a(2), b(6)
     double complex      ::  uhat(nx_max, ny_max), trans_fft(nx_max, ny_max), ftab(nx_max, ny_max, n_types_max)
 
-    integer             ::  slice(nz_max, n_atoms_tot_max), m_fft(nx_max)
+    integer             ::  slice(nz_max, n_atoms_tot_max), m_fft(nx_max), conj_row(nx_max), i_nyq, n_direct
 
     ! Facteur de structure par blocs de n_blk atomes (slice_potential): phases selon x et y, produit par ZGEMM
     integer, parameter  ::  n_blk = 256
@@ -166,6 +166,18 @@ module slc
         enddo
         gmax = 0.5d0*nx / box_hrtem(1) ! Limite de Nyquist
 
+        ! Symetrie hermitienne S(-g) = conjg(S(g)) (positions reelles): seules les colonnes my >= 0 (et my = -ny/2) sont
+        ! calculees; conj_row(i) est la ligne de frequence -mx, 0 pour la ligne de Nyquist mx = -nx/2 (sans partenaire)
+        n_direct = ny/2 + 1
+        i_nyq = 0
+        do i_px = 1, nx
+            conj_row(i_px) = modulo(-m_fft(i_px), nx) + 1
+            if (m_fft(conj_row(i_px)) .ne. -m_fft(i_px)) then
+                conj_row(i_px) = 0
+                i_nyq = i_px
+            endif
+        enddo
+
         call unique_scattering_factors ! Type (Z, B) de chaque atome, facteurs de diffusion calcules une seule fois par type
 
         slice_count = 0
@@ -243,7 +255,10 @@ module slc
                 if (n_in_blk .eq. n_blk) call add_block(n_in_blk, first_blk)
             enddo
             if (n_in_blk .gt. 0) call add_block(n_in_blk, first_blk)
-            if (.not. first_blk) uhat(1:nx, 1:ny) = uhat(1:nx, 1:ny) + ftab(1:nx, 1:ny, i_type) * sfac(1:nx, 1:ny)
+            if (.not. first_blk) then
+                call fill_conjugate
+                uhat(1:nx, 1:ny) = uhat(1:nx, 1:ny) + ftab(1:nx, 1:ny, i_type) * sfac(1:nx, 1:ny)
+            endif
         enddo
         uhat = (v0 / volume_slc) * uhat
 
@@ -259,13 +274,34 @@ module slc
         logical, intent(inout)  ::  first_blk
         double complex          ::  beta
 
-        ! sfac = Px . Py^T pour le premier bloc du type, sfac = sfac + Px . Py^T ensuite
+        ! sfac = Px . Py^T pour le premier bloc du type, sfac = sfac + Px . Py^T ensuite, sur les colonnes 1:n_direct
         beta = dcmplx(1.0d0, 0.0d0)
         if (first_blk) beta = dcmplx(0.0d0, 0.0d0)
-        call zgemm('N', 'T', nx, ny, n_in_blk, dcmplx(1.0d0, 0.0d0), phase_x_blk, nx_max, phase_y_blk, ny_max, &
+        call zgemm('N', 'T', nx, n_direct, n_in_blk, dcmplx(1.0d0, 0.0d0), phase_x_blk, nx_max, phase_y_blk, ny_max, &
                     beta, sfac, nx_max)
+        ! Ligne de Nyquist: pas de partenaire -mx sur la grille, ses autres colonnes sont calculees directement
+        if (i_nyq .gt. 0 .and. ny .gt. n_direct) call zgemm('N', 'T', 1, ny - n_direct, n_in_blk, dcmplx(1.0d0, 0.0d0), &
+                    phase_x_blk(i_nyq, 1), nx_max, phase_y_blk(n_direct + 1, 1), ny_max, beta, sfac(i_nyq, n_direct + 1), nx_max)
         first_blk = .false.
         n_in_blk = 0
+
+    endsubroutine
+
+
+
+    subroutine fill_conjugate
+
+        use variable, only: nx, ny
+
+        integer ::  i_px, j_px, jp
+
+        ! Colonnes my < 0 (sauf -ny/2) par symetrie hermitienne: S(mx, my) = conjg(S(-mx, -my))
+        do j_px = n_direct + 1, ny
+            jp = modulo(-m_fft(j_px), ny) + 1
+            do i_px = 1, nx
+                if (conj_row(i_px) .gt. 0) sfac(i_px, j_px) = conjg(sfac(conj_row(i_px), jp))
+            enddo
+        enddo
 
     endsubroutine
 
