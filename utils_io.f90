@@ -199,47 +199,29 @@ module utils_io
 
     subroutine save_data
 
-        use descriptor
-        use variable, only: n_ranks, nx, ny, images_data, descriptors_data, aberr_re, aberr_im, phi, theta, psi, position_scale
+        use variable, only: n_ranks, images_data, descriptors_data
 
-        integer             :: i_file, ierr, i_px
-        character(len=10)   :: rank_suffix
-        integer             :: pixel_row(nx*ny)
+        integer                         :: i_file, ierr
+        character(len=10)               :: rank_suffix
+        character(len=:), allocatable   :: images_tmp, descriptors_tmp
 
+        ! Les lignes des fichiers par rang sont deja au format final: concatenation dans l'ordre des rangs
         open(10, file=descriptors_data, status='replace')
-        open(11, file=images_data, status='replace')
         write(10, '(A)') 'id_sim n_atoms n_steps initial_temperature epot_total composition gyration_radius nat1 nat2 &
                     & nat1_out nat2_out nat1_in nat2_in d_com coreshell_index phi theta psi position_scale defocus A1_re A1_im &
                     & B2_re B2_im A2_re A2_im C3 S3_re S3_im A3_re A3_im B4_re B4_im D4_re D4_im A4_re A4_im'
+        close(10)
+        images_tmp = ''
+        descriptors_tmp = ''
         do i_file = 0, n_ranks-1
             write(rank_suffix, '(I0)') i_file
-            open(12, file='descriptors_rank_' // trim(adjustl(rank_suffix)) // '.tmp', status='old')
-            open(13, file='images_rank_' // trim(adjustl(rank_suffix)) // '.tmp', status='old')
-            do 
-                read(12, *, iostat=ierr) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, & 
-                    gyration_radius, nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, &
-                    psi, position_scale, aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), &
-                    aberr_im(5), aberr_re(6), aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), &
-                    aberr_re(10), aberr_im(10), aberr_re(11), aberr_im(11)
-                if (ierr.ne.0) exit         
-                write(10, *) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
-                    nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, psi, position_scale, &
-                    aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), &
-                    aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), &
-                    aberr_re(11), aberr_im(11)
-                    read(13, *, iostat=ierr) id_sim_bis, pixel_row
-                if (ierr.ne.0) exit
-                write(11, '(I0)', advance='no') id_sim_bis
-                do i_px = 1, nx*ny
-                    write(11, '(1X,I0)', advance='no') pixel_row(i_px)
-                enddo
-                write(11, *)
-            enddo
-            close(12)
-            close(13)
-        enddo    
-        close(11)
-        close(10)
+            images_tmp = images_tmp // ' images_rank_' // trim(rank_suffix) // '.tmp'
+            descriptors_tmp = descriptors_tmp // ' descriptors_rank_' // trim(rank_suffix) // '.tmp'
+        enddo
+        call execute_command_line('cat' // descriptors_tmp // ' >> ' // trim(descriptors_data), exitstat=ierr)
+        if (ierr .ne. 0) stop 'error: could not write descriptors_data'
+        call execute_command_line('cat' // images_tmp // ' > ' // trim(images_data), exitstat=ierr)
+        if (ierr .ne. 0) stop 'error: could not write images_data'
 
     endsubroutine
 
