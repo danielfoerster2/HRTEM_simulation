@@ -188,9 +188,10 @@ module utils_io
         call sample_aberration(10, 0.0d0, 1500.0d0) ! D4 5th-order term
         call sample_aberration(11, 0.0d0, 1500.0d0) ! A4 5th-order term
 
-        ! Définition du defocus peut être à revoir
+        ! Defocus de Scherzer + U(-3, 3) nm, rapporte au plan median de la particule (z moyen, nul apres place_in_box)
+        ! et non au plan de sortie de la boite: on retire la distance entre ce plan et la sortie de la boite
         aberr_re(2) = -1.2d0 * sqrt(abs(aberr_re(6)) * lambda) + random_uniform(-3.0d0, 3.0d0)
-        aberr_re(2) = aberr_re(2) - (0.5d0*box_hrtem(3)*10.0d0 - maxval(pos_cluster(3,1:n_atoms))) * 0.1d0
+        aberr_re(2) = aberr_re(2) - (0.5d0*box_hrtem(3)*10.0d0 - sum(pos_cluster(3,1:n_atoms)) / dble(n_atoms)) * 0.1d0
         aberr_im(2) = 0.0d0
 
     endsubroutine
