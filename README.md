@@ -25,8 +25,8 @@ form factor (thermal diffuse scattering), so a larger B means both weaker high-f
 
 | Element | In the code | Bulk value at 300 K (Debye model) | Status |
 |---|---|---|---|
-| Ag | 0.019 nm² (1.9 Å²) | 0.64 Å² (θ_D = 225 K) | to be discussed |
-| Co | 0.015 nm² (1.5 Å²) | 0.31 Å² (θ_D = 445 K) | to be discussed |
+| Ag | 0.019 nm² (1.9 Å²) | 0.64 Å² (θ_D = 225 K) | 3× too large, to be discussed (see below) |
+| Co | 0.015 nm² (1.5 Å²) | 0.31 Å² (θ_D = 445 K) | 3× too large, to be discussed (see below) |
 | C (a-C substrate) | 0.003 nm² (0.3 Å²) | see below | proposed |
 
 ### Carbon (substrate)
@@ -45,28 +45,57 @@ Proposed value: **B = 0.3 Å² (0.003 nm²)**, one value for all substrate atoms
 
 The substrate file reader now reads only species and positions; the per-atom `dwf` column is ignored.
 
+#### Substrate positions are time-averaged (verified)
+
+The slabs are made with LAMMPS (Tersoff carbon, melt-quench to 300 K; `in.substrate` / `in.substrate.old-lammps` and
+`run.sh` of the `carbon_substrate` generator). Their positions are time averages, so applying B to them does not count
+the thermal motion twice:
+
+- During the last 500 fs at 300 K, `fix ave/atom 1 500 500` averages the unwrapped coordinates and their squares at
+  every step. The file holds the averaged positions ⟨r⟩ and, per atom, B = 8π²/3 (⟨r²⟩ - ⟨r⟩²), i.e. with the factor
+  1/3 that turns the 3D mean-square displacement into ⟨u_x²⟩.
+- Checked on a 5 x 5 x 2 nm test run that saved a frame every 10 fs through the averaging window: the positions in
+  the output agree with an independent average of the raw frames to 0.001 Å (rms) and differ from the instantaneous
+  last frame by 0.092 Å (rms). Mean B: 0.1986 Å² in the file, 0.1987 Å² recomputed, per-atom correlation 1.000.
+- Checked on 21 production slabs: each file holds the averaged frame (not the empty step-0 frame LAMMPS also writes),
+  the `dwf_mean` in the header matches the column, z lies in [0, thickness], and x, y go up to 0.18 Å outside
+  [0, 100) (unwrapped averages; the HRTEM code wraps them when it applies the random lateral shift).
+- So the slab means of 0.15-0.20 Å² are correct classical values, and the 0.3 Å² used here adds the zero-point motion.
+- Minor: 0.02-0.35 % of the atoms hop between two sites during the window (B > 1 Å²) and their averaged position lies
+  between the two; the 500 fs window does not fully average the slowest in-plane vibrations (period about 1 ps at
+  10 nm wavelength). Both are negligible at 0.12 nm resolution.
+
 ### Silver and cobalt: open questions
 
-The current values are about 3× (Ag) and 5× (Co) the bulk room-temperature values. Two questions decide what they
-should be:
+1. **The current values are 3× too large.** They come from `debye.py` (repository `vbarrere/Debye-Waller_factor`),
+   which computes B = 8π² ⟨|r - ⟨r⟩|²⟩ from a series of MD frames. ⟨|r - ⟨r⟩|²⟩ sums the three axes, whereas
+   B = 8π² ⟨u_x²⟩ = 8π² ⟨|r - ⟨r⟩|²⟩ / 3. Divided by 3, Ag gives 0.0063 nm² (0.63 Å²), which matches the classical bulk
+   value for Ag at 300 K (0.63 Å²), and Co gives 0.005 nm² (0.5 Å², assuming it came from the same script), somewhat
+   above the bulk estimate of about 0.3 Å². (Minor: the loop over frames starts at the second frame but divides by
+   the total number of frames.)
+2. **Are the MD snapshot positions instantaneous or time-averaged?** Unlike the substrate, everything points to
+   instantaneous positions: the MD code writes instantaneous frames (`debye.py` relies on their fluctuations), the
+   dataset files have the same layout with a per-atom potential energy, and nothing in the workflow averages positions.
+   What is not known here is the temperature at the end of the runs.
+   - Instantaneous positions at about 300 K already contain the thermal displacements: each image is then one
+     frozen-phonon configuration, and adding a B on top counts the thermal motion twice. B should be close to 0 in
+     that case (averaging over several snapshots then plays the role of the Debye-Waller damping).
+   - Time-averaged positions, or a quench that ends near 0 K, need the full B: the corrected values, 0.0063 nm² (Ag)
+     and 0.005 nm² (Co). Surface atoms vibrate more than bulk atoms, so a somewhat larger value is defensible for
+     small particles.
+   - A check on one snapshot: for like-species nearest neighbours in the core (away from the surface and the Ag/Co
+     interface), the spread of the pair distance is about 0.07-0.1 Å for instantaneous positions at 300 K, and below
+     about 0.03 Å for averaged positions or a near-0 K quench.
 
-1. **Where do 1.9 Å² and 1.5 Å² come from?** They could be meant to include surface softening or the MD temperature.
-2. **Are the MD snapshot positions instantaneous or time-averaged?**
-   - Instantaneous positions already contain the thermal displacements: each image is then one frozen-phonon
-     configuration, and adding a B on top counts the thermal motion twice. B should be close to 0 in that case
-     (averaging over several snapshots then plays the role of the Debye-Waller damping).
-   - Time-averaged (equilibrium) positions need the full B. Bulk values are the starting point; surface atoms vibrate
-     more than bulk atoms, so a somewhat larger value is defensible for small particles.
+Effect of the choice on the damping factor exp(-B g²/4) (B = 0 gives 1):
 
-Effect of the choice on the damping factor exp(-B g²/4):
-
-| Reflection | g (nm⁻¹) | Ag, 1.9 Å² | Ag, 0.64 Å² | Co, 1.5 Å² | Co, 0.31 Å² |
+| Reflection | g (nm⁻¹) | Ag, 1.9 Å² (now) | Ag, 0.63 Å² (corrected) | Co, 1.5 Å² (now) | Co, 0.5 Å² (corrected) |
 |---|---|---|---|---|---|
 | Ag 111 (0.236 nm) | 4.24 | 0.918 | 0.972 | | |
-| Co 111, fcc (0.205 nm) | 4.89 | | | 0.914 | 0.982 |
-| Ag 220 (0.144 nm) | 6.92 | 0.796 | 0.926 | | |
-| Co 220, fcc (0.125 nm) | 7.98 | | | 0.788 | 0.952 |
-| band limit, 256 px (0.117 nm) | 8.53 | 0.708 | 0.890 | 0.761 | 0.945 |
+| Co 111, fcc (0.205 nm) | 4.89 | | | 0.914 | 0.971 |
+| Ag 220 (0.144 nm) | 6.92 | 0.796 | 0.927 | | |
+| Co 220, fcc (0.125 nm) | 7.98 | | | 0.788 | 0.923 |
+| band limit, 256 px (0.117 nm) | 8.53 | 0.708 | 0.892 | 0.761 | 0.913 |
 
 ### Form factor cache: one B per element
 
