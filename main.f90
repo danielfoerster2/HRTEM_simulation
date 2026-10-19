@@ -1,7 +1,7 @@
 program main
 
     use mpi
-    use constants, only: file_list, image_unit, descriptor_unit, nx_max, ny_max, nz_max, substrate_list, hc, e0
+    use constants, only: file_list, image_unit, descriptor_unit, nx_max, nz_max, substrate_list, hc, e0
     use variable, only: max_files, snapshot_index, species, augmentation_index, atom_typ1, atom_typ2, placed, &
                         nx, ny, nz, ht, data_file, found, n_ranks, images_data, descriptors_data, substrate_dir, &
                         lambda
@@ -36,20 +36,20 @@ program main
     call get_environment_variable('atom_typ2', atom_typ2)
     call get_environment_variable('n_px', env_var)
     read(env_var, *) nx
-    read(env_var, *) ny
+    ny = nx ! grille carree uniquement
     call get_environment_variable('nz', env_var)
     read(env_var, *) nz
     call get_environment_variable('ht', env_var)
     read(env_var, *) ht
 
-    if (nx .lt. 1 .or. nx .gt. nx_max .or. ny .lt. 1 .or. ny .gt. ny_max) stop 'error: n_px out of range [1, 256]'
+    if (nx .lt. 1 .or. nx .gt. nx_max) stop 'error: n_px out of range [1, 256]'
     if (nz .lt. 1 .or. nz .gt. nz_max) stop 'error: nz out of range [1, 20]'
 
 
     if(rank.eq.0) call execute_command_line('find ' // xyz_dir // & 
             ' -maxdepth 1 -name "*.xyz" | sort -V > ' // file_list)
     if(rank.eq.0) call execute_command_line('find ' // trim(substrate_dir) // &
-        ' -maxdepth 1 -name "*.xyz" | sort -V > ' // substrate_list)
+        ' -maxdepth 1 -name "*.xyz" -printf "%f\n" | sort -V > ' // substrate_list)
 
     if (rank .eq. 0) call execute_command_line('mkdir -p xyz_substrate')
     call mpi_barrier(MPI_COMM_WORLD, ierr)
@@ -97,8 +97,7 @@ program main
             call run_msa
             call run_wavimg
 
-            call save_data_row
-            accepted = .true.
+            call save_data_row(accepted)
             if (accepted) n_accepted = n_accepted + 1
         enddo
         accepted_local = accepted_local + n_accepted

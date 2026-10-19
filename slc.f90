@@ -1,10 +1,10 @@
 module slc
 
-    use constants, only: nx_max, ny_max, nz_max, n_types_max, n_atoms_max, n_atoms_tot_max
+    use constants, only: nx_max, ny_max, nz_max, n_types_max, n_atoms_tot_max
 
     implicit none
 
-    integer             ::  n_types, type_index(n_atoms_max+35000), atomic_number_type(n_types_max)
+    integer             ::  n_types, type_index(n_atoms_tot_max), atomic_number_type(n_types_max)
     integer             ::  slice_count(nz_max)
     double precision    ::  volume_slc, f_re, f_im, gthr2, gx(nx_max), gy(ny_max), biso_type(n_types_max), a(2), b(6)
     double complex      ::  uhat(nx_max, ny_max), trans_fft(nx_max, ny_max), ftab(n_types_max, nx_max, ny_max)
@@ -269,6 +269,7 @@ module slc
                 endif
             enddo
             if (type_index(i_atom) .eq. 0) then
+                if (n_types .ge. n_types_max) stop 'error: more than n_types_max distinct atom types'
                 n_types = n_types + 1
                 atomic_number_type(n_types) = atomic_number(i_atom)
                 biso_type(n_types) = biso(i_atom)

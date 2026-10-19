@@ -38,17 +38,26 @@ module utils_io
         use constants, only: substrate_list
         use variable, only: substrate_files, n_substrate_files
 
-        integer :: ierr, i_file
+        integer             :: ierr, i_file, len_max
+        character(len=255)  :: line
 
+        ! Premier passage: nombre de fichiers et longueur maximale des noms, pour allouer la liste
         n_substrate_files = 0
+        len_max = 1
         open(10, file=substrate_list, status='old', action='read')
-        do i_file = 1, size(substrate_files)
-            read(10, '(A)', iostat=ierr) substrate_files(i_file)
+        do
+            read(10, '(A)', iostat=ierr) line
             if (ierr /= 0) exit
             n_substrate_files = n_substrate_files + 1
+            len_max = max(len_max, len_trim(line))
+        enddo
+        if (n_substrate_files .eq. 0) stop 'error: no substrate files found'
+        allocate(character(len=len_max) :: substrate_files(n_substrate_files))
+        rewind(10)
+        do i_file = 1, n_substrate_files
+            read(10, '(A)') substrate_files(i_file)
         enddo
         close(10)
-        if (n_substrate_files .eq. 0) stop 'error: no substrate files found'
 
     endsubroutine
 
@@ -71,7 +80,8 @@ module utils_io
 
 
     subroutine read_xyz
-        
+
+        use constants, only: n_atoms_max
         use variable, only: xyz_files, snapshot_index, pos, species, epot, box
         use descriptor, only: n_atoms
 
@@ -81,6 +91,11 @@ module utils_io
 
         open(10, file=xyz_files(snapshot_index), status='old', action='read')
         read(10, *) n_atoms
+        if (n_atoms .gt. n_atoms_max) then
+            write(*,*) 'error: n_atoms = ', n_atoms, ' exceeds n_atoms_max = ', n_atoms_max, &
+                ' in ', trim(xyz_files(snapshot_index))
+            stop
+        endif
         read(10, '(A)') line
         do i_atom = 1, n_atoms
             read(10, *) species(i_atom)(1:2), pos(1, i_atom), pos(2, i_atom), pos(3, i_atom), epot(i_atom)
@@ -184,7 +199,7 @@ module utils_io
     subroutine save_data
 
         use descriptor
-        use variable, only: n_ranks, nx, ny, images_data, descriptors_data, aberr_re, aberr_im, phi, theta, position_scale
+        use variable, only: n_ranks, nx, ny, images_data, descriptors_data, aberr_re, aberr_im, phi, theta, psi, position_scale
 
         integer             :: i_file, ierr, i_px
         character(len=10)   :: rank_suffix
@@ -193,7 +208,7 @@ module utils_io
         open(10, file=descriptors_data, status='replace')
         open(11, file=images_data, status='replace')
         write(10, '(A)') 'id_sim n_atoms n_steps initial_temperature epot_total composition gyration_radius nat1 nat2 &
-                    & nat1_out nat2_out nat1_in nat2_in d_com coreshell_index phi theta position_scale defocus A1_re A1_im &
+                    & nat1_out nat2_out nat1_in nat2_in d_com coreshell_index phi theta psi position_scale defocus A1_re A1_im &
                     & B2_re B2_im A2_re A2_im C3 S3_re S3_im A3_re A3_im B4_re B4_im D4_re D4_im A4_re A4_im'
         do i_file = 0, n_ranks-1
             write(rank_suffix, '(I0)') i_file
@@ -202,12 +217,12 @@ module utils_io
             do 
                 read(12, *, iostat=ierr) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, & 
                     gyration_radius, nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, &
-                    position_scale, aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), &
+                    psi, position_scale, aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), &
                     aberr_im(5), aberr_re(6), aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), &
                     aberr_re(10), aberr_im(10), aberr_re(11), aberr_im(11)
                 if (ierr.ne.0) exit         
                 write(10, *) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
-                    nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, position_scale, &
+                    nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, psi, position_scale, &
                     aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), &
                     aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), &
                     aberr_re(11), aberr_im(11)
@@ -228,21 +243,20 @@ module utils_io
     endsubroutine
 
 
-    subroutine save_data_row
-    
+    subroutine save_data_row(written)
+
         use constants, only: image_unit, descriptor_unit
         use descriptor
-        use variable, only: nx, ny, image, aberr_re, aberr_im, phi, theta, position_scale
+        use variable, only: nx, ny, image, aberr_re, aberr_im, phi, theta, psi, position_scale
 
+        logical, intent(out)    :: written
         integer             :: i_px, j_px, qimage(nx, ny)
         double precision    :: scaled, image_min, image_max
 
+        written = .false.
         image_min = minval(image(1:nx, 1:ny))
         image_max = maxval(image(1:nx, 1:ny))
-        if (image_max .le. image_min) then
-            qimage = 0
-            return
-        endif
+        if (image_max .le. image_min) return
         write(image_unit, '(I0)', advance='no') id_sim_bis
         do j_px = 1, ny
             do i_px = 1, nx
@@ -253,10 +267,12 @@ module utils_io
         enddo
         write(image_unit, *)
         write(descriptor_unit, *) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
-            nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, position_scale, aberr_re(2), &
-            aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), aberr_re(7), aberr_im(7), &
-            aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), aberr_re(11), aberr_im(11)
-    
+            nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, psi, position_scale, &
+            aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), &
+            aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), &
+            aberr_re(11), aberr_im(11)
+        written = .true.
+
     endsubroutine
 
 

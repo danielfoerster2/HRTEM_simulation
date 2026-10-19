@@ -12,7 +12,7 @@ export descriptors_data="data.dat"
 export max_files=-1 # Put -1 to use all files in the dataset
 export atom_typ1="Ag"
 export atom_typ2="Co"
-export n_px=128
+export n_px=256
 export nz=20
 export ht=200.0
 
