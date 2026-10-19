@@ -3,6 +3,14 @@
 Multislice HRTEM image simulation of MD nanoparticles (AgCo) on amorphous-carbon substrates, parallelised with MPI.
 Settings and paths are in `run.sh`; `make` builds `main`.
 
+## Requirements
+
+- An MPI Fortran compiler (`mpifort`), FFTW3 (double precision) and OpenBLAS. The library paths are set in `LDLIBS`
+  in the `Makefile` (`/lib/x86_64-linux-gnu/libfftw3.so.3` and `/lib/x86_64-linux-gnu/libopenblas.so.0`, from the
+  Ubuntu packages `libfftw3-double3` and `libopenblas0`).
+- `run.sh` sets `OPENBLAS_NUM_THREADS=1`. Each MPI rank must use a single BLAS thread; otherwise every rank starts one
+  thread per core and the machine is oversubscribed.
+
 ## Debye-Waller factors
 
 The isotropic Debye-Waller factors are set in `constants.f90`, in nm² (1 nm² = 100 Å²):
@@ -64,8 +72,8 @@ Effect of the choice on the damping factor exp(-B g²/4):
 
 The form factors (Weickenmeier-Kohl, with absorptive part) are computed once per run for each distinct (Z, B) pair and
 reused for every image (`unique_scattering_factors` and `compute_form_factor` in `slc.f90`). This is valid because the
-grid, the voltage and B are fixed for the whole run. At 256 px the computation takes about 1 s per pair and per rank,
-instead of about 1 s per element and per image.
+grid, the voltage and B are fixed for the whole run. At 256 px the computation takes 1-2 s per pair and per rank,
+once per run instead of once per image.
 
 Consequences:
 

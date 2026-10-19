@@ -7,9 +7,22 @@ module slc
     integer             ::  n_types = 0, type_index(n_atoms_tot_max), atomic_number_type(n_types_max)
     integer             ::  slice_count(nz_max)
     double precision    ::  volume_slc, f_re, f_im, gthr2, gx(nx_max), gy(ny_max), biso_type(n_types_max), a(2), b(6)
-    double complex      ::  uhat(nx_max, ny_max), trans_fft(nx_max, ny_max), ftab(n_types_max, nx_max, ny_max)
+    double complex      ::  uhat(nx_max, ny_max), trans_fft(nx_max, ny_max), ftab(nx_max, ny_max, n_types_max)
 
-    integer             ::  slice(nz_max, n_atoms_tot_max)
+    integer             ::  slice(nz_max, n_atoms_tot_max), m_fft(nx_max)
+
+    ! Facteur de structure par blocs de n_blk atomes (slice_potential): phases selon x et y, produit par ZGEMM
+    integer, parameter  ::  n_blk = 256
+    double complex      ::  phase_x_blk(nx_max, n_blk), phase_y_blk(ny_max, n_blk), sfac(nx_max, ny_max)
+
+    interface
+        subroutine zgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc)
+            character, intent(in)           ::  transa, transb
+            integer, intent(in)             ::  m, n, k, lda, ldb, ldc
+            double complex, intent(in)      ::  alpha, beta, a(lda, *), b(ldb, *)
+            double complex, intent(inout)   ::  c(ldc, *)
+        endsubroutine
+    endinterface
 
 
     double precision, parameter ::  v(1:98) = (/ 0.5d0, 0.5d0, 0.5d0, 0.3d0, 0.5d0, 0.5d0, 0.5d0, 0.5d0, 0.5d0, 0.5d0, &
@@ -146,6 +159,7 @@ module slc
 
         do i_px = 1, nx
             mx = fft_index(i_px, nx) ! indices pour espaces reciproques et grille centrée en 0
+            m_fft(i_px) = mx
             gx(i_px) = dble(mx) / box_hrtem(1) ! Frequence spatiale en x
             my = fft_index(i_px, ny)
             gy(i_px) = dble(my) / box_hrtem(2) ! Frequence spatiale en y
@@ -206,32 +220,81 @@ module slc
 
     subroutine slice_potential(index_slice)
     
-        use constants, only: pi, v0, box_hrtem
+        use constants, only: v0
         use variable, only: pos_cluster, nx, ny
 
-        integer             ::  i_atom, i_type, i_px, j_px
-        double precision    ::  r(2), phase
-        double complex      ::  phase_x(nx), phase_y(ny), shift_y
+        integer             ::  k, i_atom, i_type, n_in_blk
+        logical             ::  first_blk
         integer, intent(in) ::  index_slice
 
+        ! uhat(g) = v0/V * somme sur les types t de ftab_t(g) * S_t(g), ou le facteur de structure du type t dans la
+        ! tranche S_t(gx, gy) = somme sur les atomes de exp(-2 pi i gx x) exp(-2 pi i gy y) = (Px . Py^T)(gx, gy)
+        ! est un produit matriciel (ZGEMM), accumule par blocs de n_blk atomes
         uhat = dcmplx(0.0d0, 0.0d0)
-        do i_atom = 1, slice_count(index_slice)
-            i_type = type_index(slice(index_slice, i_atom))
-            r = pos_cluster(1:2, slice(index_slice, i_atom)) * box_hrtem(1:2)
-            do i_px = 1, nx
-                phase = -2.0d0*pi * gx(i_px) * r(1)
-                phase_x(i_px) = dcmplx(cos(phase), sin(phase))
-                phase = -2.0d0*pi * gy(i_px) * r(2)
-                phase_y(i_px) = dcmplx(cos(phase), sin(phase))
+        do i_type = 1, n_types
+            first_blk = .true.
+            n_in_blk = 0
+            do k = 1, slice_count(index_slice)
+                i_atom = slice(index_slice, k)
+                if (type_index(i_atom) .ne. i_type) cycle
+                n_in_blk = n_in_blk + 1
+                call atom_phases(pos_cluster(1, i_atom), nx, phase_x_blk(:, n_in_blk))
+                call atom_phases(pos_cluster(2, i_atom), ny, phase_y_blk(:, n_in_blk))
+                if (n_in_blk .eq. n_blk) call add_block(n_in_blk, first_blk)
             enddo
-            do j_px = 1, ny
-                shift_y = phase_y(j_px)
-                do i_px = 1, nx
-                    uhat(i_px, j_px) = uhat(i_px, j_px) + ftab(i_type, i_px, j_px) * phase_x(i_px) * shift_y
-                enddo
-            enddo
+            if (n_in_blk .gt. 0) call add_block(n_in_blk, first_blk)
+            if (.not. first_blk) uhat(1:nx, 1:ny) = uhat(1:nx, 1:ny) + ftab(1:nx, 1:ny, i_type) * sfac(1:nx, 1:ny)
         enddo
         uhat = (v0 / volume_slc) * uhat
+
+    endsubroutine
+
+
+
+    subroutine add_block(n_in_blk, first_blk)
+
+        use variable, only: nx, ny
+
+        integer, intent(inout)  ::  n_in_blk
+        logical, intent(inout)  ::  first_blk
+        double complex          ::  beta
+
+        ! sfac = Px . Py^T pour le premier bloc du type, sfac = sfac + Px . Py^T ensuite
+        beta = dcmplx(1.0d0, 0.0d0)
+        if (first_blk) beta = dcmplx(0.0d0, 0.0d0)
+        call zgemm('N', 'T', nx, ny, n_in_blk, dcmplx(1.0d0, 0.0d0), phase_x_blk, nx_max, phase_y_blk, ny_max, &
+                    beta, sfac, nx_max)
+        first_blk = .false.
+        n_in_blk = 0
+
+    endsubroutine
+
+
+
+    subroutine atom_phases(frac, n, ph)
+
+        use constants, only: pi
+
+        integer                         ::  i, m
+        double complex                  ::  w, pw(0:nx_max)
+        integer, intent(in)             ::  n
+        double precision, intent(in)    ::  frac
+        double complex, intent(out)     ::  ph(n)
+
+        ! ph(i) = exp(-2 pi i m frac) pour la frequence m = m_fft(i), par puissances successives de exp(-2 pi i frac)
+        w = dcmplx(cos(2.0d0*pi*frac), -sin(2.0d0*pi*frac))
+        pw(0) = dcmplx(1.0d0, 0.0d0)
+        do m = 1, n/2
+            pw(m) = pw(m-1) * w
+        enddo
+        do i = 1, n
+            m = m_fft(i)
+            if (m .ge. 0) then
+                ph(i) = pw(m)
+            else
+                ph(i) = conjg(pw(-m))
+            endif
+        enddo
 
     endsubroutine
 
@@ -281,7 +344,7 @@ module slc
                 g2 = gx(i_px)**2 + gy(j_px)**2
                 apod = 0.5d0 - 0.5d0*tanh((sqrt(g2)/gmax - 0.9d0) * 30.0d0)
                 call scattering_factor(index_type)
-                ftab(index_type, i_px, j_px) = apod * dcmplx(f_re, f_im)
+                ftab(i_px, j_px, index_type) = apod * dcmplx(f_re, f_im)
             enddo
         enddo
 

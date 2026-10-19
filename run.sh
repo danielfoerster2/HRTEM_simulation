@@ -15,6 +15,7 @@ export atom_typ2="Co"
 export n_px=256
 export nz=20
 export ht=200.0
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 # un thread BLAS par rang MPI
 
 
 
