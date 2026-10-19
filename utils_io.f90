@@ -199,9 +199,11 @@ module utils_io
 
     subroutine save_data
 
-        use variable, only: n_ranks, images_data, descriptors_data
+        use, intrinsic :: iso_fortran_env, only: int64
+        use variable, only: n_ranks, images_data, descriptors_data, nx, ny
 
         integer                         :: i_file, ierr
+        integer(int64)                  :: file_size, total_size
         character(len=10)               :: rank_suffix
         character(len=:), allocatable   :: images_tmp, descriptors_tmp
 
@@ -213,42 +215,75 @@ module utils_io
         close(10)
         images_tmp = ''
         descriptors_tmp = ''
+        total_size = 0
         do i_file = 0, n_ranks-1
             write(rank_suffix, '(I0)') i_file
             images_tmp = images_tmp // ' images_rank_' // trim(rank_suffix) // '.tmp'
             descriptors_tmp = descriptors_tmp // ' descriptors_rank_' // trim(rank_suffix) // '.tmp'
+            inquire(file='images_rank_' // trim(rank_suffix) // '.tmp', size=file_size)
+            total_size = total_size + file_size
         enddo
+        if (mod(total_size, int(4 + nx*ny, int64)) .ne. 0) stop 'error: truncated image records'
         call execute_command_line('cat' // descriptors_tmp // ' >> ' // trim(descriptors_data), exitstat=ierr)
         if (ierr .ne. 0) stop 'error: could not write descriptors_data'
-        call execute_command_line('cat' // images_tmp // ' > ' // trim(images_data), exitstat=ierr)
+        call write_npy_header(trim(images_data), int(total_size / int(4 + nx*ny, int64)))
+        call execute_command_line('cat' // images_tmp // ' >> ' // trim(images_data), exitstat=ierr)
         if (ierr .ne. 0) stop 'error: could not write images_data'
+
+    endsubroutine
+
+
+    subroutine write_npy_header(filename, n_images)
+
+        use variable, only: nx, ny
+
+        integer, intent(in)             :: n_images
+        character(len=*), intent(in)    :: filename
+        integer                         :: unit_npy, len_header
+        character(len=16)               :: s_nx, s_ny, s_n
+        character(len=:), allocatable   :: dict
+
+        ! En-tete NPY 1.0 d'un tableau structure (id int32, image uint8 ny x nx): numpy.load(filename, mmap_mode='r')
+        write(s_nx, '(I0)') nx
+        write(s_ny, '(I0)') ny
+        write(s_n, '(I0)') n_images
+        dict = "{'descr': [('id', '<i4'), ('image', '|u1', (" // trim(s_ny) // ", " // trim(s_nx) // "))], " // &
+               "'fortran_order': False, 'shape': (" // trim(s_n) // ",), }"
+        ! magic (6) + version (2) + longueur (2) + dictionnaire complete par des blancs et '\n': multiple de 64 octets
+        len_header = 64 * ((10 + len(dict) + 1 + 63) / 64) - 10
+        dict = dict // repeat(' ', len_header - len(dict) - 1) // achar(10)
+        open(newunit=unit_npy, file=filename, access='stream', form='unformatted', status='replace')
+        write(unit_npy) char(147) // 'NUMPY' // char(1) // char(0) // char(mod(len_header, 256)) // char(len_header / 256), dict
+        close(unit_npy)
 
     endsubroutine
 
 
     subroutine save_data_row(written)
 
+        use, intrinsic :: iso_fortran_env, only: int8, int32
         use constants, only: image_unit, descriptor_unit
         use descriptor
         use variable, only: nx, ny, image, aberr_re, aberr_im, phi, theta, psi, position_scale
 
         logical, intent(out)    :: written
-        integer             :: i_px, j_px, qimage(nx, ny)
+        integer             :: i_px, j_px, q
+        integer(int8)       :: qimage(nx, ny)
         double precision    :: scaled, image_min, image_max
 
+        ! Enregistrement binaire: id (int32) puis l'image en octets non signes 0-255 (x le plus rapide), voir README.md
         written = .false.
         image_min = minval(image(1:nx, 1:ny))
         image_max = maxval(image(1:nx, 1:ny))
         if (image_max .le. image_min) return
-        write(image_unit, '(I0)', advance='no') id_sim_bis
         do j_px = 1, ny
             do i_px = 1, nx
-                scaled = -128.0d0 + 255.0d0 * (image(i_px, j_px) - image_min) / (image_max - image_min)
-                qimage(i_px, j_px) = max(-128, min(127, nint(scaled)))
-                write(image_unit, '(1X,I0)', advance='no') qimage(i_px, j_px)
+                scaled = 255.0d0 * (image(i_px, j_px) - image_min) / (image_max - image_min)
+                q = max(0, min(255, nint(scaled)))
+                qimage(i_px, j_px) = int(q - 256 * (q / 128), int8) ! octet non signe stocke dans un entier 8 bits
             enddo
         enddo
-        write(image_unit, *)
+        write(image_unit) int(id_sim_bis, int32), qimage
         write(descriptor_unit, *) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
             nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, psi, position_scale, &
             aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), &

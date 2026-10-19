@@ -11,6 +11,26 @@ Settings and paths are in `run.sh`; `make` builds `main`.
 - `run.sh` sets `OPENBLAS_NUM_THREADS=1`. Each MPI rank must use a single BLAS thread; otherwise every rank starts one
   thread per core and the machine is oversubscribed.
 
+## Output
+
+The file names come from `images_data` and `descriptors_data` in `run.sh`.
+
+- **Descriptors** (`descriptors_data`, text): a header line, then one row per image with the cluster descriptors, the
+  rotation angles (`phi theta psi`), `position_scale` and the sampled aberrations (`defocus` is C1 in nm).
+- **Images** (`images_data`, `images.npy`): a NumPy file holding one record per image, in the same order as the
+  descriptor rows. Each record has `id` (int32, the `id_sim` of the matching descriptor row) and `image` (uint8,
+  ny × nx, first index = y). Each image is min-max scaled to 0-255. A record takes 4 + n² bytes: 64 KB at 256 px,
+  instead of about 214 KB per image in the former text format (which stored the same values minus 128).
+
+```python
+import numpy as np
+images = np.load("images.npy", mmap_mode="r")   # memory-mapped, nothing is read until used
+ids, first = images["id"], images["image"][0]   # first.shape == (256, 256), dtype uint8
+```
+
+`images_to_png.py` writes one `{id}.png` per image if PNG files are needed. For training, reading the memory-mapped
+array directly avoids creating one file per image.
+
 ## Debye-Waller factors
 
 The isotropic Debye-Waller factors are set in `constants.f90`, in nm² (1 nm² = 100 Å²):

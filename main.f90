@@ -63,7 +63,7 @@ program main
     rank_images = 'images_rank_' // trim(adjustl(rank_suffix)) // '.tmp'
     rank_descriptors = 'descriptors_rank_' // trim(adjustl(rank_suffix)) // '.tmp'
 
-    open(image_unit, file=rank_images, action='write', status='replace')
+    open(image_unit, file=rank_images, action='write', status='replace', access='stream', form='unformatted')
     open(descriptor_unit, file=rank_descriptors, action='write', status='replace')
     n_images_local = (last_file - first_file + 1) * 10
     accepted_local = 0

@@ -1,4 +1,5 @@
 *.dat
+*.npy
 /images_png
 /xyz_substrate
 *.tmp
