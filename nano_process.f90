@@ -267,7 +267,7 @@ module nano_process
     subroutine read_substrate_file
 
         use constants, only: n_atoms_substrate_max, box_hrtem
-        use variable, only: substrate_file, n_atoms_substrate, pos_substrate, species_substrate, dbf_c
+        use variable, only: substrate_file, n_atoms_substrate, pos_substrate, species_substrate
 
         integer ::  i_atom, index0, index1
         double precision    ::  lattice(9)
@@ -283,7 +283,7 @@ module nano_process
         read(10, '(A)') line
         do i_atom = 1, n_atoms_substrate
             read(10, *) species_substrate(i_atom)(1:2), pos_substrate(1, i_atom), pos_substrate(2, i_atom), &
-                            pos_substrate(3, i_atom), dbf_c(i_atom)
+                            pos_substrate(3, i_atom)
         enddo
         close(10)
         ! Le decalage lateral aleatoire (add_substrate_to_cluster) suppose un substrat periodique de la taille de la boite
@@ -294,7 +294,6 @@ module nano_process
             write(*,*) 'error: substrate cell ', lattice(1), lattice(5), ' does not match box_hrtem in ', trim(substrate_file)
             stop
         endif
-        dbf_c(1:n_atoms_substrate) = 0.01d0 *sum(dbf_c(1:n_atoms_substrate)) / dble(n_atoms_substrate)
 
     endsubroutine
 
@@ -387,9 +386,8 @@ module nano_process
     
     subroutine prepare_hrtem_particle
         
-        use constants, only: dbf_ag, dbf_co, box_hrtem
-        use descriptor, only: n_atoms
-        use variable, only: species, atom_typ1, atom_typ2, pos_cluster, atomic_number, biso, dbf_c, n_atoms_tot
+        use constants, only: dbf_ag, dbf_co, dbf_c, box_hrtem
+        use variable, only: species, atom_typ1, atom_typ2, pos_cluster, atomic_number, biso, n_atoms_tot
 
         integer ::  i_atom
 
@@ -402,7 +400,7 @@ module nano_process
                 biso(i_atom) = dbf_co
             else 
                 atomic_number(i_atom) = 6
-                biso(i_atom) = dbf_c(i_atom - n_atoms)
+                biso(i_atom) = dbf_c
             endif
             pos_cluster(:, i_atom) = pos_cluster(:, i_atom) / (box_hrtem*10.0d0)
         enddo

@@ -4,7 +4,7 @@ module slc
 
     implicit none
 
-    integer             ::  n_types, type_index(n_atoms_tot_max), atomic_number_type(n_types_max)
+    integer             ::  n_types = 0, type_index(n_atoms_tot_max), atomic_number_type(n_types_max)
     integer             ::  slice_count(nz_max)
     double precision    ::  volume_slc, f_re, f_im, gthr2, gx(nx_max), gy(ny_max), biso_type(n_types_max), a(2), b(6)
     double complex      ::  uhat(nx_max, ny_max), trans_fft(nx_max, ny_max), ftab(n_types_max, nx_max, ny_max)
@@ -130,11 +130,11 @@ module slc
     subroutine run_slc
 
         use constants, only: sigma0, box_hrtem
-        use variable, only: nx, ny, nz, lambda, dx, dy, dz, g2, trans, gmax, n_atoms_tot, pos_cluster
+        use variable, only: nx, ny, nz, lambda, dx, dy, dz, trans, gmax, n_atoms_tot, pos_cluster
         use fft, only: fft_index, fft2
 
-        integer             ::  i_px, j_px, mx, my, index_slice, index_type, i_atom
-        double precision    ::  apod(nx, ny), sigma_lambda
+        integer             ::  i_px, mx, my, index_slice, i_atom
+        double precision    ::  sigma_lambda
         double complex      ::  pot(nx, ny), trans_filtered(nx, ny)
 
 
@@ -144,8 +144,6 @@ module slc
         dz = box_hrtem(3) / dble(nz)
         volume_slc = box_hrtem(1) * box_hrtem(2) * dz
 
-        call unique_scattering_factors ! Creation d'un tableau de facteurs de diffusion unique pour chaque type d'atome
-
         do i_px = 1, nx
             mx = fft_index(i_px, nx) ! indices pour espaces reciproques et grille centrée en 0
             gx(i_px) = dble(mx) / box_hrtem(1) ! Frequence spatiale en x
@@ -153,22 +151,8 @@ module slc
             gy(i_px) = dble(my) / box_hrtem(2) ! Frequence spatiale en y
         enddo
         gmax = 0.5d0*nx / box_hrtem(1) ! Limite de Nyquist
-        do j_px = 1, ny
-            do i_px = 1, nx
-                apod(i_px, j_px) = 0.5d0 - 0.5d0*tanh((sqrt(gx(i_px)**2 + gy(j_px)**2)/gmax -0.9d0) * 30.0d0)
-            enddo
-        enddo
 
-        do index_type = 1, n_types
-            call get_weko(index_type)
-            do j_px = 1, ny
-                do i_px = 1, nx
-                    g2 = gx(i_px)**2 + gy(j_px)**2
-                    call scattering_factor(index_type)
-                    ftab(index_type, i_px, j_px) = apod(i_px, j_px) * dcmplx(f_re, f_im)
-                enddo
-            enddo
-        enddo
+        call unique_scattering_factors ! Type (Z, B) de chaque atome, facteurs de diffusion calcules une seule fois par type
 
         slice_count = 0
         do i_atom = 1, n_atoms_tot
@@ -259,7 +243,8 @@ module slc
 
         integer ::  i_atom, i_type
 
-        n_types = 0
+        ! La table des types et ftab sont conserves d'une image a l'autre (grille, tension et B fixes pendant tout le
+        ! calcul): ftab n'est calcule qu'a la premiere apparition d'un couple (Z, B)
         do i_atom = 1, n_atoms_tot
             type_index(i_atom) = 0
             do i_type = 1, n_types
@@ -269,12 +254,35 @@ module slc
                 endif
             enddo
             if (type_index(i_atom) .eq. 0) then
-                if (n_types .ge. n_types_max) stop 'error: more than n_types_max distinct atom types'
+                if (n_types .ge. n_types_max) stop 'error: more than n_types_max distinct (Z, B) pairs, see README.md'
                 n_types = n_types + 1
                 atomic_number_type(n_types) = atomic_number(i_atom)
                 biso_type(n_types) = biso(i_atom)
                 type_index(i_atom) = n_types
+                call compute_form_factor(n_types)
             endif
+        enddo
+
+    endsubroutine
+
+
+
+    subroutine compute_form_factor(index_type)
+
+        use variable, only: nx, ny, g2, gmax
+
+        integer             ::  i_px, j_px
+        double precision    ::  apod
+        integer, intent(in) ::  index_type
+
+        call get_weko(index_type)
+        do j_px = 1, ny
+            do i_px = 1, nx
+                g2 = gx(i_px)**2 + gy(j_px)**2
+                apod = 0.5d0 - 0.5d0*tanh((sqrt(g2)/gmax - 0.9d0) * 30.0d0)
+                call scattering_factor(index_type)
+                ftab(index_type, i_px, j_px) = apod * dcmplx(f_re, f_im)
+            enddo
         enddo
 
     endsubroutine
