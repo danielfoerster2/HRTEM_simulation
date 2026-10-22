@@ -7,14 +7,15 @@ np="${1:-90}"
 export xyz_dir="/home/victor/Data/MD_Data/AgCo/Dataset4/XYZ"
 export data_file="/home/victor/Data/MD_Data/AgCo/Dataset4/data.dat"
 export substrate_dir="/home/victor/Data/carbon_substrates"
-export images_data="images.dat"
+export images_data="images.npy"
 export descriptors_data="data.dat"
 export max_files=-1 # Put -1 to use all files in the dataset
 export atom_typ1="Ag"
 export atom_typ2="Co"
-export n_px=128
+export n_px=256
 export nz=20
 export ht=200.0
+export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 # un thread BLAS par rang MPI
 
 
 

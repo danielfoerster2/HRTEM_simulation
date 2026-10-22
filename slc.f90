@@ -1,15 +1,28 @@
 module slc
 
-    use constants, only: nx_max, ny_max, nz_max, n_types_max, n_atoms_max, n_atoms_tot_max
+    use constants, only: nx_max, ny_max, nz_max, n_types_max, n_atoms_tot_max
 
     implicit none
 
-    integer             ::  n_types, type_index(n_atoms_max+35000), atomic_number_type(n_types_max)
+    integer             ::  n_types = 0, type_index(n_atoms_tot_max), atomic_number_type(n_types_max)
     integer             ::  slice_count(nz_max)
     double precision    ::  volume_slc, f_re, f_im, gthr2, gx(nx_max), gy(ny_max), biso_type(n_types_max), a(2), b(6)
-    double complex      ::  uhat(nx_max, ny_max), trans_fft(nx_max, ny_max), ftab(n_types_max, nx_max, ny_max)
+    double complex      ::  uhat(nx_max, ny_max), trans_fft(nx_max, ny_max), ftab(nx_max, ny_max, n_types_max)
 
-    integer             ::  slice(nz_max, n_atoms_tot_max)
+    integer             ::  slice(nz_max, n_atoms_tot_max), m_fft(nx_max), conj_row(nx_max), i_nyq, n_direct
+
+    ! Facteur de structure par blocs de n_blk atomes (slice_potential): phases selon x et y, produit par ZGEMM
+    integer, parameter  ::  n_blk = 256
+    double complex      ::  phase_x_blk(nx_max, n_blk), phase_y_blk(ny_max, n_blk), sfac(nx_max, ny_max)
+
+    interface
+        subroutine zgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc)
+            character, intent(in)           ::  transa, transb
+            integer, intent(in)             ::  m, n, k, lda, ldb, ldc
+            double complex, intent(in)      ::  alpha, beta, a(lda, *), b(ldb, *)
+            double complex, intent(inout)   ::  c(ldc, *)
+        endsubroutine
+    endinterface
 
 
     double precision, parameter ::  v(1:98) = (/ 0.5d0, 0.5d0, 0.5d0, 0.3d0, 0.5d0, 0.5d0, 0.5d0, 0.5d0, 0.5d0, 0.5d0, &
@@ -130,11 +143,11 @@ module slc
     subroutine run_slc
 
         use constants, only: sigma0, box_hrtem
-        use variable, only: nx, ny, nz, lambda, dx, dy, dz, g2, trans, gmax, n_atoms_tot, pos_cluster
+        use variable, only: nx, ny, nz, lambda, dx, dy, dz, trans, gmax, n_atoms_tot, pos_cluster
         use fft, only: fft_index, fft2
 
-        integer             ::  i_px, j_px, mx, my, index_slice, index_type, i_atom
-        double precision    ::  apod(nx, ny), sigma_lambda
+        integer             ::  i_px, mx, my, index_slice, i_atom
+        double precision    ::  sigma_lambda
         double complex      ::  pot(nx, ny), trans_filtered(nx, ny)
 
 
@@ -144,31 +157,28 @@ module slc
         dz = box_hrtem(3) / dble(nz)
         volume_slc = box_hrtem(1) * box_hrtem(2) * dz
 
-        call unique_scattering_factors ! Creation d'un tableau de facteurs de diffusion unique pour chaque type d'atome
-
         do i_px = 1, nx
             mx = fft_index(i_px, nx) ! indices pour espaces reciproques et grille centrée en 0
+            m_fft(i_px) = mx
             gx(i_px) = dble(mx) / box_hrtem(1) ! Frequence spatiale en x
             my = fft_index(i_px, ny)
             gy(i_px) = dble(my) / box_hrtem(2) ! Frequence spatiale en y
         enddo
         gmax = 0.5d0*nx / box_hrtem(1) ! Limite de Nyquist
-        do j_px = 1, ny
-            do i_px = 1, nx
-                apod(i_px, j_px) = 0.5d0 - 0.5d0*tanh((sqrt(gx(i_px)**2 + gy(j_px)**2)/gmax -0.9d0) * 30.0d0)
-            enddo
+
+        ! Symetrie hermitienne S(-g) = conjg(S(g)) (positions reelles): seules les colonnes my >= 0 (et my = -ny/2) sont
+        ! calculees; conj_row(i) est la ligne de frequence -mx, 0 pour la ligne de Nyquist mx = -nx/2 (sans partenaire)
+        n_direct = ny/2 + 1
+        i_nyq = 0
+        do i_px = 1, nx
+            conj_row(i_px) = modulo(-m_fft(i_px), nx) + 1
+            if (m_fft(conj_row(i_px)) .ne. -m_fft(i_px)) then
+                conj_row(i_px) = 0
+                i_nyq = i_px
+            endif
         enddo
 
-        do index_type = 1, n_types
-            call get_weko(index_type)
-            do j_px = 1, ny
-                do i_px = 1, nx
-                    g2 = gx(i_px)**2 + gy(j_px)**2
-                    call scattering_factor(index_type)
-                    ftab(index_type, i_px, j_px) = apod(i_px, j_px) * dcmplx(f_re, f_im)
-                enddo
-            enddo
-        enddo
+        call unique_scattering_factors ! Type (Z, B) de chaque atome, facteurs de diffusion calcules une seule fois par type
 
         slice_count = 0
         do i_atom = 1, n_atoms_tot
@@ -222,32 +232,105 @@ module slc
 
     subroutine slice_potential(index_slice)
     
-        use constants, only: pi, v0, box_hrtem
+        use constants, only: v0
         use variable, only: pos_cluster, nx, ny
 
-        integer             ::  i_atom, i_type, i_px, j_px
-        double precision    ::  r(2), phase
-        double complex      ::  phase_x(nx), phase_y(ny), shift_y
+        integer             ::  k, i_atom, i_type, n_in_blk
+        logical             ::  first_blk
         integer, intent(in) ::  index_slice
 
+        ! uhat(g) = v0/V * somme sur les types t de ftab_t(g) * S_t(g), ou le facteur de structure du type t dans la
+        ! tranche S_t(gx, gy) = somme sur les atomes de exp(-2 pi i gx x) exp(-2 pi i gy y) = (Px . Py^T)(gx, gy)
+        ! est un produit matriciel (ZGEMM), accumule par blocs de n_blk atomes
         uhat = dcmplx(0.0d0, 0.0d0)
-        do i_atom = 1, slice_count(index_slice)
-            i_type = type_index(slice(index_slice, i_atom))
-            r = pos_cluster(1:2, slice(index_slice, i_atom)) * box_hrtem(1:2)
-            do i_px = 1, nx
-                phase = -2.0d0*pi * gx(i_px) * r(1)
-                phase_x(i_px) = dcmplx(cos(phase), sin(phase))
-                phase = -2.0d0*pi * gy(i_px) * r(2)
-                phase_y(i_px) = dcmplx(cos(phase), sin(phase))
+        do i_type = 1, n_types
+            first_blk = .true.
+            n_in_blk = 0
+            do k = 1, slice_count(index_slice)
+                i_atom = slice(index_slice, k)
+                if (type_index(i_atom) .ne. i_type) cycle
+                n_in_blk = n_in_blk + 1
+                call atom_phases(pos_cluster(1, i_atom), nx, phase_x_blk(:, n_in_blk))
+                call atom_phases(pos_cluster(2, i_atom), ny, phase_y_blk(:, n_in_blk))
+                if (n_in_blk .eq. n_blk) call add_block(n_in_blk, first_blk)
             enddo
-            do j_px = 1, ny
-                shift_y = phase_y(j_px)
-                do i_px = 1, nx
-                    uhat(i_px, j_px) = uhat(i_px, j_px) + ftab(i_type, i_px, j_px) * phase_x(i_px) * shift_y
-                enddo
-            enddo
+            if (n_in_blk .gt. 0) call add_block(n_in_blk, first_blk)
+            if (.not. first_blk) then
+                call fill_conjugate
+                uhat(1:nx, 1:ny) = uhat(1:nx, 1:ny) + ftab(1:nx, 1:ny, i_type) * sfac(1:nx, 1:ny)
+            endif
         enddo
         uhat = (v0 / volume_slc) * uhat
+
+    endsubroutine
+
+
+
+    subroutine add_block(n_in_blk, first_blk)
+
+        use variable, only: nx, ny
+
+        integer, intent(inout)  ::  n_in_blk
+        logical, intent(inout)  ::  first_blk
+        double complex          ::  beta
+
+        ! sfac = Px . Py^T pour le premier bloc du type, sfac = sfac + Px . Py^T ensuite, sur les colonnes 1:n_direct
+        beta = dcmplx(1.0d0, 0.0d0)
+        if (first_blk) beta = dcmplx(0.0d0, 0.0d0)
+        call zgemm('N', 'T', nx, n_direct, n_in_blk, dcmplx(1.0d0, 0.0d0), phase_x_blk, nx_max, phase_y_blk, ny_max, &
+                    beta, sfac, nx_max)
+        ! Ligne de Nyquist: pas de partenaire -mx sur la grille, ses autres colonnes sont calculees directement
+        if (i_nyq .gt. 0 .and. ny .gt. n_direct) call zgemm('N', 'T', 1, ny - n_direct, n_in_blk, dcmplx(1.0d0, 0.0d0), &
+                    phase_x_blk(i_nyq, 1), nx_max, phase_y_blk(n_direct + 1, 1), ny_max, beta, sfac(i_nyq, n_direct + 1), nx_max)
+        first_blk = .false.
+        n_in_blk = 0
+
+    endsubroutine
+
+
+
+    subroutine fill_conjugate
+
+        use variable, only: nx, ny
+
+        integer ::  i_px, j_px, jp
+
+        ! Colonnes my < 0 (sauf -ny/2) par symetrie hermitienne: S(mx, my) = conjg(S(-mx, -my))
+        do j_px = n_direct + 1, ny
+            jp = modulo(-m_fft(j_px), ny) + 1
+            do i_px = 1, nx
+                if (conj_row(i_px) .gt. 0) sfac(i_px, j_px) = conjg(sfac(conj_row(i_px), jp))
+            enddo
+        enddo
+
+    endsubroutine
+
+
+
+    subroutine atom_phases(frac, n, ph)
+
+        use constants, only: pi
+
+        integer                         ::  i, m
+        double complex                  ::  w, pw(0:nx_max)
+        integer, intent(in)             ::  n
+        double precision, intent(in)    ::  frac
+        double complex, intent(out)     ::  ph(n)
+
+        ! ph(i) = exp(-2 pi i m frac) pour la frequence m = m_fft(i), par puissances successives de exp(-2 pi i frac)
+        w = dcmplx(cos(2.0d0*pi*frac), -sin(2.0d0*pi*frac))
+        pw(0) = dcmplx(1.0d0, 0.0d0)
+        do m = 1, n/2
+            pw(m) = pw(m-1) * w
+        enddo
+        do i = 1, n
+            m = m_fft(i)
+            if (m .ge. 0) then
+                ph(i) = pw(m)
+            else
+                ph(i) = conjg(pw(-m))
+            endif
+        enddo
 
     endsubroutine
 
@@ -259,7 +342,8 @@ module slc
 
         integer ::  i_atom, i_type
 
-        n_types = 0
+        ! La table des types et ftab sont conserves d'une image a l'autre (grille, tension et B fixes pendant tout le
+        ! calcul): ftab n'est calcule qu'a la premiere apparition d'un couple (Z, B)
         do i_atom = 1, n_atoms_tot
             type_index(i_atom) = 0
             do i_type = 1, n_types
@@ -269,11 +353,35 @@ module slc
                 endif
             enddo
             if (type_index(i_atom) .eq. 0) then
+                if (n_types .ge. n_types_max) stop 'error: more than n_types_max distinct (Z, B) pairs, see README.md'
                 n_types = n_types + 1
                 atomic_number_type(n_types) = atomic_number(i_atom)
                 biso_type(n_types) = biso(i_atom)
                 type_index(i_atom) = n_types
+                call compute_form_factor(n_types)
             endif
+        enddo
+
+    endsubroutine
+
+
+
+    subroutine compute_form_factor(index_type)
+
+        use variable, only: nx, ny, g2, gmax
+
+        integer             ::  i_px, j_px
+        double precision    ::  apod
+        integer, intent(in) ::  index_type
+
+        call get_weko(index_type)
+        do j_px = 1, ny
+            do i_px = 1, nx
+                g2 = gx(i_px)**2 + gy(j_px)**2
+                apod = 0.5d0 - 0.5d0*tanh((sqrt(g2)/gmax - 0.9d0) * 30.0d0)
+                call scattering_factor(index_type)
+                ftab(i_px, j_px, index_type) = apod * dcmplx(f_re, f_im)
+            enddo
         enddo
 
     endsubroutine

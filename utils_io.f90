@@ -38,17 +38,26 @@ module utils_io
         use constants, only: substrate_list
         use variable, only: substrate_files, n_substrate_files
 
-        integer :: ierr, i_file
+        integer             :: ierr, i_file, len_max
+        character(len=255)  :: line
 
+        ! Premier passage: nombre de fichiers et longueur maximale des noms, pour allouer la liste
         n_substrate_files = 0
+        len_max = 1
         open(10, file=substrate_list, status='old', action='read')
-        do i_file = 1, size(substrate_files)
-            read(10, '(A)', iostat=ierr) substrate_files(i_file)
+        do
+            read(10, '(A)', iostat=ierr) line
             if (ierr /= 0) exit
             n_substrate_files = n_substrate_files + 1
+            len_max = max(len_max, len_trim(line))
+        enddo
+        if (n_substrate_files .eq. 0) stop 'error: no substrate files found'
+        allocate(character(len=len_max) :: substrate_files(n_substrate_files))
+        rewind(10)
+        do i_file = 1, n_substrate_files
+            read(10, '(A)') substrate_files(i_file)
         enddo
         close(10)
-        if (n_substrate_files .eq. 0) stop 'error: no substrate files found'
 
     endsubroutine
 
@@ -71,7 +80,8 @@ module utils_io
 
 
     subroutine read_xyz
-        
+
+        use constants, only: n_atoms_max
         use variable, only: xyz_files, snapshot_index, pos, species, epot, box
         use descriptor, only: n_atoms
 
@@ -81,6 +91,11 @@ module utils_io
 
         open(10, file=xyz_files(snapshot_index), status='old', action='read')
         read(10, *) n_atoms
+        if (n_atoms .gt. n_atoms_max) then
+            write(*,*) 'error: n_atoms = ', n_atoms, ' exceeds n_atoms_max = ', n_atoms_max, &
+                ' in ', trim(xyz_files(snapshot_index))
+            stop
+        endif
         read(10, '(A)') line
         do i_atom = 1, n_atoms
             read(10, *) species(i_atom)(1:2), pos(1, i_atom), pos(2, i_atom), pos(3, i_atom), epot(i_atom)
@@ -173,9 +188,10 @@ module utils_io
         call sample_aberration(10, 0.0d0, 1500.0d0) ! D4 5th-order term
         call sample_aberration(11, 0.0d0, 1500.0d0) ! A4 5th-order term
 
-        ! Définition du defocus peut être à revoir
+        ! Defocus de Scherzer + U(-3, 3) nm, rapporte au plan median de la particule (z moyen, nul apres place_in_box)
+        ! et non au plan de sortie de la boite: on retire la distance entre ce plan et la sortie de la boite
         aberr_re(2) = -1.2d0 * sqrt(abs(aberr_re(6)) * lambda) + random_uniform(-3.0d0, 3.0d0)
-        aberr_re(2) = aberr_re(2) - (0.5d0*box_hrtem(3)*10.0d0 - maxval(pos_cluster(3,1:n_atoms))) * 0.1d0
+        aberr_re(2) = aberr_re(2) - (0.5d0*box_hrtem(3)*10.0d0 - sum(pos_cluster(3,1:n_atoms)) / dble(n_atoms)) * 0.1d0
         aberr_im(2) = 0.0d0
 
     endsubroutine
@@ -183,80 +199,98 @@ module utils_io
 
     subroutine save_data
 
-        use descriptor
-        use variable, only: n_ranks, nx, ny, images_data, descriptors_data, aberr_re, aberr_im, phi, theta, position_scale
+        use, intrinsic :: iso_fortran_env, only: int64
+        use variable, only: n_ranks, images_data, descriptors_data, nx, ny
 
-        integer             :: i_file, ierr, i_px
-        character(len=10)   :: rank_suffix
-        integer             :: pixel_row(nx*ny)
+        integer                         :: i_file, ierr
+        integer(int64)                  :: file_size, total_size
+        character(len=10)               :: rank_suffix
+        character(len=:), allocatable   :: images_tmp, descriptors_tmp
 
+        ! Les lignes des fichiers par rang sont deja au format final: concatenation dans l'ordre des rangs
         open(10, file=descriptors_data, status='replace')
-        open(11, file=images_data, status='replace')
         write(10, '(A)') 'id_sim n_atoms n_steps initial_temperature epot_total composition gyration_radius nat1 nat2 &
-                    & nat1_out nat2_out nat1_in nat2_in d_com coreshell_index phi theta position_scale defocus A1_re A1_im &
+                    & nat1_out nat2_out nat1_in nat2_in d_com coreshell_index phi theta psi position_scale defocus A1_re A1_im &
                     & B2_re B2_im A2_re A2_im C3 S3_re S3_im A3_re A3_im B4_re B4_im D4_re D4_im A4_re A4_im'
+        close(10)
+        images_tmp = ''
+        descriptors_tmp = ''
+        total_size = 0
         do i_file = 0, n_ranks-1
             write(rank_suffix, '(I0)') i_file
-            open(12, file='descriptors_rank_' // trim(adjustl(rank_suffix)) // '.tmp', status='old')
-            open(13, file='images_rank_' // trim(adjustl(rank_suffix)) // '.tmp', status='old')
-            do 
-                read(12, *, iostat=ierr) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, & 
-                    gyration_radius, nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, &
-                    position_scale, aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), &
-                    aberr_im(5), aberr_re(6), aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), &
-                    aberr_re(10), aberr_im(10), aberr_re(11), aberr_im(11)
-                if (ierr.ne.0) exit         
-                write(10, '(*(G0,1X))') id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
-                    nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, position_scale, &
-                    aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), &
-                    aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), &
-                    aberr_re(11), aberr_im(11)
-                    read(13, *, iostat=ierr) id_sim_bis, pixel_row
-                if (ierr.ne.0) exit
-                write(11, '(I0)', advance='no') id_sim_bis
-                do i_px = 1, nx*ny
-                    write(11, '(1X,I0)', advance='no') pixel_row(i_px)
-                enddo
-                write(11, *)
-            enddo
-            close(12)
-            close(13)
-        enddo    
-        close(11)
-        close(10)
+            images_tmp = images_tmp // ' images_rank_' // trim(rank_suffix) // '.tmp'
+            descriptors_tmp = descriptors_tmp // ' descriptors_rank_' // trim(rank_suffix) // '.tmp'
+            inquire(file='images_rank_' // trim(rank_suffix) // '.tmp', size=file_size)
+            total_size = total_size + file_size
+        enddo
+        if (mod(total_size, int(4 + nx*ny, int64)) .ne. 0) stop 'error: truncated image records'
+        call execute_command_line('cat' // descriptors_tmp // ' >> ' // trim(descriptors_data), exitstat=ierr)
+        if (ierr .ne. 0) stop 'error: could not write descriptors_data'
+        call write_npy_header(trim(images_data), int(total_size / int(4 + nx*ny, int64)))
+        call execute_command_line('cat' // images_tmp // ' >> ' // trim(images_data), exitstat=ierr)
+        if (ierr .ne. 0) stop 'error: could not write images_data'
 
     endsubroutine
 
 
-    subroutine save_data_row
-    
+    subroutine write_npy_header(filename, n_images)
+
+        use variable, only: nx, ny
+
+        integer, intent(in)             :: n_images
+        character(len=*), intent(in)    :: filename
+        integer                         :: unit_npy, len_header
+        character(len=16)               :: s_nx, s_ny, s_n
+        character(len=:), allocatable   :: dict
+
+        ! En-tete NPY 1.0 d'un tableau structure (id int32, image uint8 ny x nx): numpy.load(filename, mmap_mode='r')
+        write(s_nx, '(I0)') nx
+        write(s_ny, '(I0)') ny
+        write(s_n, '(I0)') n_images
+        dict = "{'descr': [('id', '<i4'), ('image', '|u1', (" // trim(s_ny) // ", " // trim(s_nx) // "))], " // &
+               "'fortran_order': False, 'shape': (" // trim(s_n) // ",), }"
+        ! magic (6) + version (2) + longueur (2) + dictionnaire complete par des blancs et '\n': multiple de 64 octets
+        len_header = 64 * ((10 + len(dict) + 1 + 63) / 64) - 10
+        dict = dict // repeat(' ', len_header - len(dict) - 1) // achar(10)
+        open(newunit=unit_npy, file=filename, access='stream', form='unformatted', status='replace')
+        write(unit_npy) char(147) // 'NUMPY' // char(1) // char(0) // char(mod(len_header, 256)) // char(len_header / 256), dict
+        close(unit_npy)
+
+    endsubroutine
+
+
+    subroutine save_data_row(written)
+
+        use, intrinsic :: iso_fortran_env, only: int8, int32
         use constants, only: image_unit, descriptor_unit
         use descriptor
-        use variable, only: nx, ny, image, aberr_re, aberr_im, phi, theta, position_scale
+        use variable, only: nx, ny, image, aberr_re, aberr_im, phi, theta, psi, position_scale
 
-        integer             :: i_px, j_px, qimage(nx, ny)
+        logical, intent(out)    :: written
+        integer             :: i_px, j_px, q
+        integer(int8)       :: qimage(nx, ny)
         double precision    :: scaled, image_min, image_max
 
+        ! Enregistrement binaire: id (int32) puis l'image en octets non signes 0-255 (x le plus rapide), voir README.md
+        written = .false.
         image_min = minval(image(1:nx, 1:ny))
         image_max = maxval(image(1:nx, 1:ny))
-        if (image_max .le. image_min) then
-            qimage = 0
-            return
-        endif
-        write(image_unit, '(I0)', advance='no') id_sim_bis
+        if (image_max .le. image_min) return
         do j_px = 1, ny
             do i_px = 1, nx
-                scaled = -128.0d0 + 255.0d0 * (image(i_px, j_px) - image_min) / (image_max - image_min)
-                qimage(i_px, j_px) = max(-128, min(127, nint(scaled)))
-                write(image_unit, '(1X,I0)', advance='no') qimage(i_px, j_px)
+                scaled = 255.0d0 * (image(i_px, j_px) - image_min) / (image_max - image_min)
+                q = max(0, min(255, nint(scaled)))
+                qimage(i_px, j_px) = int(q - 256 * (q / 128), int8) ! octet non signe stocke dans un entier 8 bits
             enddo
         enddo
-        write(image_unit, *)
-        write(descriptor_unit, '(*(G0,1X))') id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
-            nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, position_scale, aberr_re(2), &
-            aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), aberr_re(7), aberr_im(7), &
-            aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), aberr_re(11), aberr_im(11)
-    
+        write(image_unit) int(id_sim_bis, int32), qimage
+        write(descriptor_unit, *) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
+            nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, psi, position_scale, &
+            aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), &
+            aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), &
+            aberr_re(11), aberr_im(11)
+        written = .true.
+
     endsubroutine
 
 

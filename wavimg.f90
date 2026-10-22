@@ -5,7 +5,10 @@ module wavimg
     implicit none
 
     double complex      ::  image_c(nx_max, ny_max)
-    double precision    ::  wx, wy, dchix, dchiy
+    double precision    ::  wx, wy, dchix, dchiy, coef(0:8, 24)
+    logical             ::  aberr_on(24)
+    integer, parameter  ::  am(24) = (/ 1, 2, 2, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 8 /)
+    integer, parameter  ::  an(24) = (/ 1, 0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6, 1, 3, 5, 7, 0, 2, 4, 6, 8 /)
 
     contains
 
@@ -123,6 +126,7 @@ module wavimg
         endif
         sc_rad = sc_mrad * 0.001d0
         scpf = (0.5d0*sc_rad) **2
+        call aberration_coefficients
         wx = 0.0d0
         wy = 0.0d0
         call aberration_gradient
@@ -180,13 +184,11 @@ module wavimg
     subroutine aberration_gradient
         
         use constants, only: pi
-        use variable, only: lambda, aberr_re, aberr_im
+        use variable, only: lambda
 
         integer             ::  k, l, m, n, j, p
-        double precision    ::  w, prefac, poly, dpolyx, dpolyy, t1, radial_x, radial_y
+        double precision    ::  w, prefac, poly, dpolyx, dpolyy, radial_x, radial_y
         double precision    ::  wxpow(0:8), wypow(0:8), wpow(0:8)
-        integer, parameter  ::  am(24) = (/ 1, 2, 2, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 8 /)
-        integer, parameter  ::  an(24) = (/ 1, 0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6, 1, 3, 5, 7, 0, 2, 4, 6, 8 /)
 
         w = sqrt(wx*wx + wy*wy)
         wxpow(0) = 1.0d0
@@ -200,7 +202,7 @@ module wavimg
         dchix = 0.0d0
         dchiy = 0.0d0
         do k = 1, 24
-            if(aberr_re(k)*aberr_re(k) + aberr_im(k)*aberr_im(k).le.1.0d-30) cycle
+            if (.not. aberr_on(k)) cycle
             m = am(k)
             n = an(k)
             p = m - n
@@ -209,16 +211,14 @@ module wavimg
             dpolyy = 0.0d0
             do l = 0, n
                 j = n - l
-                t1 = sign_cycle(l) * aberr_re(k) + sign_cycle(l+3) * aberr_im(k)
-                poly = poly + t1 * dble(binomial(n, l)) * wxpow(j) * wypow(l)
+                poly = poly + coef(l, k) * wxpow(j) * wypow(l)
                 if(j.gt.0) then
-                    dpolyx = dpolyx + t1 * dble(binomial(n, l)) * dble(j) * wxpow(j-1) * wypow(l)
+                    dpolyx = dpolyx + coef(l, k) * dble(j) * wxpow(j-1) * wypow(l)
                 endif
             enddo
             do l = 1, n
                 j = n - l
-                t1 = sign_cycle(l) * aberr_re(k) + sign_cycle(l+3) * aberr_im(k)
-                dpolyy = dpolyy + t1 * dble(binomial(n, l)) * dble(l) * wxpow(j) * wypow(l-1)
+                dpolyy = dpolyy + coef(l, k) * dble(l) * wxpow(j) * wypow(l-1)
             enddo
             radial_x = 0.0d0
             radial_y = 0.0d0
@@ -233,6 +233,24 @@ module wavimg
         dchix = prefac * dchix
         dchiy = prefac * dchiy
     
+    endsubroutine
+
+
+    subroutine aberration_coefficients
+
+        use variable, only: aberr_re, aberr_im
+
+        integer ::  k, l
+
+        ! Coefficients des polynomes d'aberration, independants du pixel: calcules une fois par image
+        do k = 1, 24
+            aberr_on(k) = .not. (aberr_re(k)*aberr_re(k) + aberr_im(k)*aberr_im(k) .le. 1.0d-30)
+            coef(:, k) = 0.0d0
+            do l = 0, an(k)
+                coef(l, k) = (sign_cycle(l) * aberr_re(k) + sign_cycle(l+3) * aberr_im(k)) * dble(binomial(an(k), l))
+            enddo
+        enddo
+
     endsubroutine
 
 
@@ -268,13 +286,11 @@ module wavimg
     double precision function aberration_chi()
 
         use constants, only: pi
-        use variable, only: lambda, aberr_re, aberr_im
+        use variable, only: lambda
 
         integer             ::  k, l, m, n, j
-        double precision    ::  w, term, t1, prefac
+        double precision    ::  w, term, prefac
         double precision    ::  wxpow(0:8), wypow(0:8), wpow(0:8)
-        integer, parameter  ::  am(24) = (/ 1, 2, 2, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 8 /)
-        integer, parameter  :: an(24) = (/ 1, 0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, 2, 4, 6, 1, 3, 5, 7, 0, 2, 4, 6, 8 /)
 
         w = sqrt(wx*wx + wy*wy)
         wxpow(0) = 1.0d0
@@ -287,14 +303,13 @@ module wavimg
         enddo
         aberration_chi = 0.0d0
         do k = 1, 24
-            if(aberr_re(k)*aberr_re(k) + aberr_im(k)*aberr_im(k).le.1.0d-30) cycle
+            if (.not. aberr_on(k)) cycle
             m = am(k)
             n = an(k)
             term = 0.0d0
             do l = 0, n
                 j = n - l
-                t1 = sign_cycle(l) * aberr_re(k) + sign_cycle(l+3) * aberr_im(k)
-                term = term + t1 * dble(binomial(n, l)) * wxpow(j) * wypow(l)
+                term = term + coef(l, k) * wxpow(j) * wypow(l)
             enddo
             term = term * wpow(m-n) / dble(m)
             aberration_chi = aberration_chi + term
