@@ -36,7 +36,7 @@ array directly avoids creating one file per image.
 The isotropic Debye-Waller factors are set in `constants.f90`, in nm² (1 nm² = 100 Å²):
 
 ```fortran
-double precision, parameter :: dbf_ag = 0.0d0, dbf_co = 0.0d0, dbf_c = 0.00144d0 ! nm²
+double precision, parameter :: dbf_ag = 0.0d0, dbf_co = 0.0d0, dbf_c = 0.001442d0 ! nm²
 ```
 
 Convention: B = 8π² ⟨u_x²⟩, where ⟨u_x²⟩ is the mean-square displacement along one axis. The elastic form factor of each
@@ -49,7 +49,7 @@ come from different kinds of MD output, so they are treated differently:
 | Atoms | Coordinates | B |
 |---|---|---|
 | Ag, Co (particle) | one instantaneous MD snapshot | 0 (the displacements are in the coordinates) |
-| C (a-C substrate) | averaged over 500 fs at 300 K | 0.144 Å² = 0.00144 nm² (diamond at 300 K) |
+| C (a-C substrate) | averaged over 500 fs at 300 K | 0.1442 Å² = 0.001442 nm² (diamond at 300 K) |
 
 Reference for the tabulated values below: L.-M. Peng, G. Ren, S. L. Dudarev and M. J. Whelan, "Debye-Waller factors and
 absorptive scattering factors of elemental crystals", Acta Cryst. A52, 456-470 (1996), doi:10.1107/S010876739600089X,
@@ -63,11 +63,18 @@ temperature: each image is one frozen-phonon configuration, and a B on top would
 - This holds if the MD ends at the temperature the images represent (300 K). Classically the mean-square displacement is
   proportional to T: a snapshot taken at 600 K carries twice the displacement variance of one at 300 K.
 - Classical MD has no zero-point motion. For Ag and Co at 300 K this changes B by about +2 % and +6 % (Debye model).
-- An experimental image averages over many configurations; one snapshot adds a random part to that average. Per atom,
-  the random share of the scattered intensity is 1 - exp(-B g²/2), with the bulk B of Ag at 300 K (0.75 Å², Peng et al.)
-  about 6.5 % at Ag 111 (0.236 nm) and 24 % at the 0.117 nm band limit. It adds incoherently over the atoms of a column
-  (√N against N for the average part), so in the image it is a weak speckle, below the shot noise and the simulated
-  vibration blur.
+- An experimental image averages over the configurations visited during the exposure. In the linear (weak-phase)
+  approximation this damps each spatial frequency of the averaged structure by exp(-B g²/4), which is the same as a
+  Gaussian image blur of rms √(B/8π²) per axis: about 0.010 nm for Ag (B = 0.75 Å² at 300 K, Peng et al.) and 0.006 nm
+  for Co (B ≈ 0.3 Å², Debye model). One snapshot is not averaged. In a crystal, the sum over the many atoms of a lattice
+  plane averages the displacements, so a snapshot already shows damped fringes plus a weak diffuse background. In a
+  disordered particle there is no such averaging: the high-frequency contrast keeps its full strength, and a fraction
+  1 - exp(-B g²/2) of it is set by the displacements instead of the structure (Ag: 6.5 % at 0.236 nm, 24 % at the
+  0.117 nm band limit). The snapshot then has up to exp(B g²/4) more contrast amplitude than the averaged image: +3 % at
+  0.236 nm and +15 % at 0.117 nm for Ag, +2 % and +6 % for Co.
+- This difference lies within the image blur sampled in `read_input` (`vib1`, `vib2`: Gaussian rms 0.005-0.04 nm per
+  direction, `apply_vibration` in `wavimg.f90`), which damps the band limit by factors between 0.97 and 0.10. Adding the
+  thermal blur in quadrature only moves the lower end of that range, from 0.005 nm to 0.011 nm for Ag.
 - The snapshot also carries the larger vibrations of surface atoms, which a single B per element cannot represent.
 
 ### Substrate (C): B = 0.144 Å²
