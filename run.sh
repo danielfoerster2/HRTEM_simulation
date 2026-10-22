@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 np="${1:-90}"
-export xyz_dir="/home/victor/Data/MD_Data/AgCo/Dataset1/XYZ"
-export data_file="/home/victor/Data/MD_Data/AgCo/Dataset1/data.dat"
+export xyz_dir="/home/victor/Data/MD_Data/AgCo/Dataset4/XYZ"
+export data_file="/home/victor/Data/MD_Data/AgCo/Dataset4/data.dat"
 export substrate_dir="/home/victor/Data/carbon_substrates"
 export images_data="images.npy"
 export descriptors_data="data.dat"
