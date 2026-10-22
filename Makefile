@@ -43,7 +43,7 @@ run: main
 
 clean:
 	rm -f *.o *.mod tmp.dat particle_descriptors.dat \
-	      descriptors.dat xyz_file_list.tmp images_rank_*.tmp descriptors_rank_*.tmp \
+	      descriptors.dat xyz_file_list.tmp records_rank_*.tmp \
 		  main
 		
 .PHONY: all run clean

@@ -2,7 +2,7 @@ module constants
 
     implicit none
 
-    integer, parameter              ::  image_unit = 11, descriptor_unit = 12
+    integer, parameter              ::  record_unit = 11
     integer, parameter              ::  base_seed = 1357911
     integer, parameter              ::  aberr_periodicity(24) = (/ &
                                             & 1, 0, 2, 1, 3, 0, 2, 4, 1, 3, 5, 0, &
@@ -42,7 +42,7 @@ module variable
     double precision    ::  phi, theta, psi
     double precision    ::  pos_substrate(3, n_atoms_substrate_max)
     character(len=2)    ::  species(n_atoms_tot_max), atom_typ1, atom_typ2, species_substrate(n_atoms_substrate_max)
-    character(len=255)  ::  xyz_files(48000), data_file, images_data, descriptors_data, substrate_file
+    character(len=255)  ::  xyz_files(48000), data_file, output_data, substrate_file
     character(len=255)  ::  substrate_dir
     character(len=:), allocatable   ::  substrate_files(:) ! noms des fichiers de substrat (sans le dossier)
     double complex      ::  trans(nx_max, ny_max, nz_max), wave(nx_max, ny_max), wave_fft(nx_max, ny_max)

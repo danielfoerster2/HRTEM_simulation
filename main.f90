@@ -1,9 +1,9 @@
 program main
 
     use mpi
-    use constants, only: file_list, image_unit, descriptor_unit, nx_max, nz_max, substrate_list, hc, e0
+    use constants, only: file_list, record_unit, nx_max, nz_max, substrate_list, hc, e0
     use variable, only: max_files, snapshot_index, species, augmentation_index, atom_typ1, atom_typ2, placed, &
-                        nx, ny, nz, ht, data_file, found, n_ranks, images_data, descriptors_data, substrate_dir, &
+                        nx, ny, nz, ht, data_file, found, n_ranks, output_data, substrate_dir, &
                         lambda
     use utils_io
     use nano_process
@@ -17,7 +17,7 @@ program main
 
     integer             ::  ierr, rank, first_file, last_file, accepted_local, accepted_total
     integer             ::  n_images_local, n_accepted
-    character(len=255)  ::  rank_suffix, rank_images, rank_descriptors
+    character(len=255)  ::  rank_suffix, rank_records
     character(len=255)  ::  xyz_dir, env_var
     logical             ::  accepted
 
@@ -28,8 +28,7 @@ program main
     call get_environment_variable('xyz_dir', xyz_dir)
     call get_environment_variable('data_file', data_file)
     call get_environment_variable('substrate_dir', substrate_dir)
-    call get_environment_variable('images_data', images_data)
-    call get_environment_variable('descriptors_data', descriptors_data)
+    call get_environment_variable('output_data', output_data)
     call get_environment_variable('max_files', env_var)
     read(env_var, *) max_files
     call get_environment_variable('atom_typ1', atom_typ1)
@@ -44,6 +43,7 @@ program main
 
     if (nx .lt. 1 .or. nx .gt. nx_max) stop 'error: n_px out of range [1, 256]'
     if (nz .lt. 1 .or. nz .gt. nz_max) stop 'error: nz out of range [1, 20]'
+    if (len_trim(output_data) .eq. 0) stop 'error: output_data not set'
 
 
     if(rank.eq.0) call execute_command_line('find ' // xyz_dir // & 
@@ -60,11 +60,9 @@ program main
     first_file = rank * max_files / n_ranks + 1
     last_file  = (rank + 1) * max_files / n_ranks
     write(rank_suffix, *) rank
-    rank_images = 'images_rank_' // trim(adjustl(rank_suffix)) // '.tmp'
-    rank_descriptors = 'descriptors_rank_' // trim(adjustl(rank_suffix)) // '.tmp'
+    rank_records = 'records_rank_' // trim(adjustl(rank_suffix)) // '.tmp'
 
-    open(image_unit, file=rank_images, action='write', status='replace', access='stream', form='unformatted')
-    open(descriptor_unit, file=rank_descriptors, action='write', status='replace')
+    open(record_unit, file=rank_records, action='write', status='replace', access='stream', form='unformatted')
     n_images_local = (last_file - first_file + 1) * 10
     accepted_local = 0
     lambda = hc / sqrt(ht * (2.0d0 * e0 + ht))
@@ -102,21 +100,19 @@ program main
         enddo
         accepted_local = accepted_local + n_accepted
     enddo
-    close(image_unit)
-    close(descriptor_unit)
+    close(record_unit)
 
     call mpi_reduce(accepted_local, accepted_total, 1, mpi_integer, mpi_sum, 0, mpi_comm_world, ierr)
     call mpi_barrier(mpi_comm_world, ierr)
 
     if (rank .eq. 0) then
         call save_data
-        write(*, '(A,1X,I0,1X,A,1X,I0)') 'prep: ', accepted_total, 'accepted images from', max_files, 'snapshots'
-        write(*, '(A,1X,A)') 'prep: wrote images to', images_data
-        write(*, '(A,1X,A)') 'prep: wrote descriptors to', descriptors_data
+        write(*, '(A,1X,I0,1X,A,1X,I0,1X,A)') 'prep: ', accepted_total, 'accepted images from', max_files, 'snapshots'
+        write(*, '(A,1X,A)') 'prep: wrote descriptors and images to', trim(output_data)
     endif
 
     call mpi_barrier(mpi_comm_world, ierr)
-    call execute_command_line('rm -f ' // trim(rank_images) // ' ' // trim(rank_descriptors), exitstat=ierr)
+    call execute_command_line('rm -f ' // trim(rank_records), exitstat=ierr)
     if (rank .eq. 0) call execute_command_line('rm -f ' // file_list, exitstat=ierr)
     if (rank .eq. 0) call execute_command_line('rm -f ' // substrate_list, exitstat=ierr)
 

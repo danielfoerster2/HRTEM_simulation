@@ -13,23 +13,40 @@ Settings and paths are in `run.sh`; `make` builds `main`.
 
 ## Output
 
-The file names come from `images_data` and `descriptors_data` in `run.sh`.
+A run writes a single file, `output_data` in `run.sh` (`dataset.npy`). It is a NumPy file holding one record per
+image, and each record contains the descriptors and the image of that simulation. Both are written by one binary
+`write` statement (`save_data_row` in `utils_io.f90`), so a descriptor row cannot be paired with the wrong image.
 
-- **Descriptors** (`descriptors_data`, text): a header line, then one row per image with the cluster descriptors, the
-  rotation angles (`phi theta psi`), `position_scale` and the sampled aberrations (`defocus` is C1 in nm).
-- **Images** (`images_data`, `images.npy`): a NumPy file holding one record per image, in the same order as the
-  descriptor rows. Each record has `id` (int32, the `id_sim` of the matching descriptor row) and `image` (uint8,
-  ny × nx, first index = y). Each image is min-max scaled to 0-255. A record takes 4 + n² bytes: 64 KB at 256 px,
-  instead of about 214 KB per image in the former text format (which stored the same values minus 128).
+Fields of a record, in file order:
+
+| Fields | Type |
+|---|---|
+| `id_sim n_atoms n_steps nat1 nat2 nat1_out nat2_out nat1_in nat2_in` | int32 |
+| `initial_temperature epot_total composition gyration_radius d_com coreshell_index` | float64 |
+| `phi theta psi position_scale` (rotation angles in rad, scale factor) | float64 |
+| `defocus A1_re A1_im B2_re B2_im A2_re A2_im C3 S3_re S3_im A3_re A3_im B4_re B4_im D4_re D4_im A4_re A4_im` (nm) | float64 |
+| `image` (ny × nx, first index = y, min-max scaled to 0-255) | uint8 |
+
+`defocus` is C1. `d_com` is NaN when the cluster contains a single species. A record takes 260 + n² bytes: 64.3 KB
+at 256 px. The field names and their order are set in `int_fields` and `real_fields` (`utils_io.f90`).
 
 ```python
 import numpy as np
-images = np.load("images.npy", mmap_mode="r")   # memory-mapped, nothing is read until used
-ids, first = images["id"], images["image"][0]   # first.shape == (256, 256), dtype uint8
+data = np.load("dataset.npy", mmap_mode="r")      # memory-mapped, nothing is read until used
+data["image"][0]                                  # first image, shape (256, 256), dtype uint8
+data[0]["phi"], data[0]["defocus"]                # descriptors of the same record
+data.dtype.names                                  # all field names
+
+import pandas as pd                               # descriptors as a table
+descriptors = pd.DataFrame({name: data[name] for name in data.dtype.names if name != "image"})
 ```
 
-`images_to_png.py` writes one `{id}.png` per image if PNG files are needed. For training, reading the memory-mapped
-array directly avoids creating one file per image.
+Reading one descriptor for all images touches every record of the file, which is slow for a large dataset. If the
+descriptors are needed often, extract them once (as above) and save that table; `id_sim` links it back to the
+records.
+
+`images_to_png.py` writes one `{id_sim}.png` per image if PNG files are needed. For training, reading the
+memory-mapped array directly avoids creating one file per image.
 
 ## Debye-Waller factors
 
