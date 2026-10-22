@@ -206,7 +206,7 @@ module utils_io
                     aberr_im(5), aberr_re(6), aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), &
                     aberr_re(10), aberr_im(10), aberr_re(11), aberr_im(11)
                 if (ierr.ne.0) exit         
-                write(10, *) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
+                write(10, '(*(G0,1X))') id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
                     nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, position_scale, &
                     aberr_re(2), aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), &
                     aberr_re(7), aberr_im(7), aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), &
@@ -252,7 +252,7 @@ module utils_io
             enddo
         enddo
         write(image_unit, *)
-        write(descriptor_unit, *) id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
+        write(descriptor_unit, '(*(G0,1X))') id_sim_bis, n_atoms, n_steps, initial_temperature, epot_total, composition, gyration_radius, &
             nat1, nat2, nat1_out, nat2_out, nat1_in, nat2_in, d_com, coreshell_index, phi, theta, position_scale, aberr_re(2), &
             aberr_re(3), aberr_im(3), aberr_re(4), aberr_im(4), aberr_re(5), aberr_im(5), aberr_re(6), aberr_re(7), aberr_im(7), &
             aberr_re(8), aberr_im(8), aberr_re(9), aberr_im(9), aberr_re(10), aberr_im(10), aberr_re(11), aberr_im(11)
