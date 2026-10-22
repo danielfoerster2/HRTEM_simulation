@@ -36,34 +36,52 @@ array directly avoids creating one file per image.
 The isotropic Debye-Waller factors are set in `constants.f90`, in nm² (1 nm² = 100 Å²):
 
 ```fortran
-double precision, parameter :: dbf_ag = 0.019d0, dbf_co = 0.015d0, dbf_c = 0.003d0 ! nm²
+double precision, parameter :: dbf_ag = 0.0d0, dbf_co = 0.0d0, dbf_c = 0.00144d0 ! nm²
 ```
 
 Convention: B = 8π² ⟨u_x²⟩, where ⟨u_x²⟩ is the mean-square displacement along one axis. The elastic form factor of each
 atom is damped by exp(-B g²/4), with g in nm⁻¹ (`scattering_factor` in `slc.f90`). B also sets the absorptive part of the
-form factor (thermal diffuse scattering), so a larger B means both weaker high-frequency contrast and more absorption.
+form factor (thermal diffuse scattering); with B = 0 there is neither damping nor absorption.
 
-| Element | In the code | Bulk value at 300 K (Debye model) | Status |
-|---|---|---|---|
-| Ag | 0.019 nm² (1.9 Å²) | 0.64 Å² (θ_D = 225 K) | 3× too large, to be discussed (see below) |
-| Co | 0.015 nm² (1.5 Å²) | 0.31 Å² (θ_D = 445 K) | 3× too large, to be discussed (see below) |
-| C (a-C substrate) | 0.003 nm² (0.3 Å²) | see below | proposed |
+The thermal motion of each atom must be counted once, either in its coordinates or in B. The particle and the substrate
+come from different kinds of MD output, so they are treated differently:
 
-### Carbon (substrate)
+| Atoms | Coordinates | B |
+|---|---|---|
+| Ag, Co (particle) | one instantaneous MD snapshot | 0 (the displacements are in the coordinates) |
+| C (a-C substrate) | averaged over 500 fs at 300 K | 0.144 Å² = 0.00144 nm² (diamond at 300 K) |
 
-Proposed value: **B = 0.3 Å² (0.003 nm²)**, one value for all substrate atoms.
+Reference for the tabulated values below: L.-M. Peng, G. Ren, S. L. Dudarev and M. J. Whelan, "Debye-Waller factors and
+absorptive scattering factors of elemental crystals", Acta Cryst. A52, 456-470 (1996), doi:10.1107/S010876739600089X,
+supplementary Table 1 (B of 44 elemental crystals from 1 K upwards, computed from measured phonon densities of states).
 
-- The a-C slabs come from classical MD. Their per-atom `dwf` column has slab means of 0.14-0.22 Å². Classical MD has no
-  zero-point motion, which is large for carbon at 300 K because its vibrational frequencies are far above k_B T.
-- A Debye model fitted to the classical slab means (effective θ_D = 1100-1400 K) gives a quantum correction of ×1.4-1.5,
-  i.e. 0.21-0.30 Å². This is a lower bound: the high-frequency sp² modes carry most of the zero-point motion, and for
-  diamond the same model gives ×2.1 (0.058 Å² classical, 0.12 Å² with zero-point motion).
-- Measured room-temperature values are about 0.14-0.2 Å² for diamond and 0.2-0.7 Å² for graphite (anisotropic). An
-  a-C film (mostly sp², 1.8-2.3 g/cm³) lies between the two.
-- The image is not very sensitive to this value: at the 256 px band limit (8.53 nm⁻¹, 0.117 nm) the damping is 0.947
-  for 0.3 Å² and 0.971 for 0.16 Å².
+### Particle (Ag, Co): B = 0
 
-The substrate file reader now reads only species and positions; the per-atom `dwf` column is ignored.
+Each particle is a single instantaneous MD snapshot, so its coordinates contain the thermal displacements at the MD
+temperature: each image is one frozen-phonon configuration, and a B on top would count the thermal motion twice.
+
+- This holds if the MD ends at the temperature the images represent (300 K). Classically the mean-square displacement is
+  proportional to T: a snapshot taken at 600 K carries twice the displacement variance of one at 300 K.
+- Classical MD has no zero-point motion. For Ag and Co at 300 K this changes B by about +2 % and +6 % (Debye model).
+- An experimental image averages over many configurations; one snapshot adds a random part to that average. Per atom,
+  the random share of the scattered intensity is 1 - exp(-B g²/2), with the bulk B of Ag at 300 K (0.75 Å², Peng et al.)
+  about 6.5 % at Ag 111 (0.236 nm) and 24 % at the 0.117 nm band limit. It adds incoherently over the atoms of a column
+  (√N against N for the average part), so in the image it is a weak speckle, below the shot noise and the simulated
+  vibration blur.
+- The snapshot also carries the larger vibrations of surface atoms, which a single B per element cannot represent.
+
+### Substrate (C): B = 0.144 Å²
+
+The value is B of diamond at 300 K in Peng et al. (0.1442 Å²; 0.1435 Å² at 293 K).
+
+- For carbon, B at room temperature is mostly zero-point motion: diamond has B = 0.1286 Å² at 1 K. Classical MD omits
+  it, so the per-atom `dwf` column of the slab files (classical, slab means 0.14-0.22 Å²) is not used; the substrate
+  reader ignores it.
+- Diamond is a lower bound for a-C, which is mostly sp²: the classical slab values are 2-4 times the classical value of
+  diamond (about 0.06 Å² at 300 K, Debye model), and a Debye-model zero-point correction of the slab values gives
+  0.21-0.30 Å².
+- The image is not sensitive to this choice: at the 256 px band limit (8.53 nm⁻¹, 0.117 nm), exp(-B g²/4) is 0.974 for
+  0.144 Å² and 0.947 for 0.3 Å².
 
 #### Substrate positions are time-averaged (verified)
 
@@ -80,42 +98,18 @@ the thermal motion twice:
 - Checked on 21 production slabs: each file holds the averaged frame (not the empty step-0 frame LAMMPS also writes),
   the `dwf_mean` in the header matches the column, z lies in [0, thickness], and x, y go up to 0.18 Å outside
   [0, 100) (unwrapped averages; the HRTEM code wraps them when it applies the random lateral shift).
-- So the slab means of 0.15-0.20 Å² are correct classical values, and the 0.3 Å² used here adds the zero-point motion.
+- So the slab means of 0.15-0.20 Å² are correct classical values, without zero-point motion.
 - Minor: 0.02-0.35 % of the atoms hop between two sites during the window (B > 1 Å²) and their averaged position lies
   between the two; the 500 fs window does not fully average the slowest in-plane vibrations (period about 1 ps at
   10 nm wavelength). Both are negligible at 0.12 nm resolution.
 
-### Silver and cobalt: open questions
+### Former values for Ag and Co (debye.py)
 
-1. **The current values are 3× too large.** They come from `debye.py` (repository `vbarrere/Debye-Waller_factor`),
-   which computes B = 8π² ⟨|r - ⟨r⟩|²⟩ from a series of MD frames. ⟨|r - ⟨r⟩|²⟩ sums the three axes, whereas
-   B = 8π² ⟨u_x²⟩ = 8π² ⟨|r - ⟨r⟩|²⟩ / 3. Divided by 3, Ag gives 0.0063 nm² (0.63 Å²), which matches the classical bulk
-   value for Ag at 300 K (0.63 Å²), and Co gives 0.005 nm² (0.5 Å², assuming it came from the same script), somewhat
-   above the bulk estimate of about 0.3 Å². (Minor: the loop over frames starts at the second frame but divides by
-   the total number of frames.)
-2. **Are the MD snapshot positions instantaneous or time-averaged?** Unlike the substrate, everything points to
-   instantaneous positions: the MD code writes instantaneous frames (`debye.py` relies on their fluctuations), the
-   dataset files have the same layout with a per-atom potential energy, and nothing in the workflow averages positions.
-   What is not known here is the temperature at the end of the runs.
-   - Instantaneous positions at about 300 K already contain the thermal displacements: each image is then one
-     frozen-phonon configuration, and adding a B on top counts the thermal motion twice. B should be close to 0 in
-     that case (averaging over several snapshots then plays the role of the Debye-Waller damping).
-   - Time-averaged positions, or a quench that ends near 0 K, need the full B: the corrected values, 0.0063 nm² (Ag)
-     and 0.005 nm² (Co). Surface atoms vibrate more than bulk atoms, so a somewhat larger value is defensible for
-     small particles.
-   - A check on one snapshot: for like-species nearest neighbours in the core (away from the surface and the Ag/Co
-     interface), the spread of the pair distance is about 0.07-0.1 Å for instantaneous positions at 300 K, and below
-     about 0.03 Å for averaged positions or a near-0 K quench.
-
-Effect of the choice on the damping factor exp(-B g²/4) (B = 0 gives 1):
-
-| Reflection | g (nm⁻¹) | Ag, 1.9 Å² (now) | Ag, 0.63 Å² (corrected) | Co, 1.5 Å² (now) | Co, 0.5 Å² (corrected) |
-|---|---|---|---|---|---|
-| Ag 111 (0.236 nm) | 4.24 | 0.918 | 0.972 | | |
-| Co 111, fcc (0.205 nm) | 4.89 | | | 0.914 | 0.971 |
-| Ag 220 (0.144 nm) | 6.92 | 0.796 | 0.927 | | |
-| Co 220, fcc (0.125 nm) | 7.98 | | | 0.788 | 0.923 |
-| band limit, 256 px (0.117 nm) | 8.53 | 0.708 | 0.892 | 0.761 | 0.913 |
+The code used dbf_ag = 0.019 nm² and dbf_co = 0.015 nm² until October 2026. They come from `debye.py` (repository
+`vbarrere/Debye-Waller_factor`), which computes 8π² ⟨|r - ⟨r⟩|²⟩ from a series of MD frames. ⟨|r - ⟨r⟩|²⟩ sums the
+three axes, so this is 3 B: B = 8π² ⟨|r - ⟨r⟩|²⟩ / 3. Divided by 3, Ag gives 0.63 Å² and Co 0.5 Å² (bulk Ag at 300 K:
+0.75 Å² in Peng et al.; Co is not tabulated there). Such values apply only to time-averaged particle coordinates. (Minor:
+the loop over frames starts at the second frame but divides by the total number of frames.)
 
 ### Form factor cache: one B per element
 

@@ -14,7 +14,7 @@ module constants
     double precision, parameter     ::  cluster_cutoff = 1.5d0 * interatomic_distance
     double precision, parameter     ::  pi = acos(-1.0d0)
     double precision, parameter     ::  lateral_border_margin = 2.0d0
-    double precision, parameter     ::  dbf_ag = 0.019d0, dbf_co = 0.015d0, dbf_c = 0.003d0 ! nm², voir README.md
+    double precision, parameter     ::  dbf_ag = 0.0d0, dbf_co = 0.0d0, dbf_c = 0.00144d0 ! nm², voir README.md
     double precision, parameter     ::  hc = 1.2398419843320026d0 ! Planck's constant times speed of light
     double precision, parameter     ::  e0 = 510.99895069d0, sigma0 = 2.0886573497d0
     double precision, parameter     ::  r8pi2 = 1.0d0/(8.0d0*pi*pi)
